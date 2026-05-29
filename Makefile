@@ -1,12 +1,14 @@
-PYTHON := python3
 VENV_DIR := env
 VENV_PY := $(VENV_DIR)/bin/python
 TEST_NAMES = 0_0_cluster 0_0_scatter 0_0_lines 0_0_expwilds 0_0_ways 0_0_lines_feature_match crimson_plinko
 
 ifeq ($(OS),Windows_NT)
+	# Python 3.14 lacks numpy wheels; math-sdk requires >= 3.12 with prebuilt wheels.
+	PYTHON ?= py -3.12
 	VENV_PY := $(VENV_DIR)\Scripts\python.exe
 	ACTIVATE := $(VENV_DIR)\Scripts\activate.bat
 else
+	PYTHON ?= python3
 	ACTIVATE := source $(VENV_DIR)/bin/activate
 endif
 

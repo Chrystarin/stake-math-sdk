@@ -2,11 +2,25 @@
 
 # difficulty -> row tier index (row_count - 8) -> slot multipliers
 # Row tiers 8..20 map to indices 0..12. Tables match 14-row crimson board (13 slots).
+
+# Easy (difficulty 0) — calibrated for default sim; raw drop win is normalized to
+# payoutMultiplier with base mode cost 1.0 (see game_override.update_final_win).
+_EASY_14_BASE = [18, 3.2, 1.6, 1.1, 1, 0.5, 0.3, 0.5, 1, 1.1, 1.6, 3.2, 18]
+_EASY_MC_AVG_RAW_DROP_WIN = 6.987  # E[sum(stake*mult)] per drop, stake_per_ball=1
+_TARGET_RTP = 0.97
+_DEFAULT_BALLS_PER_DROP = 10.0
+# Target E[payoutMultiplier] = RTP * cost = 0.97 after dividing raw win by balls*stake.
+_EASY_RTP_SCALE = (_TARGET_RTP * _DEFAULT_BALLS_PER_DROP) / _EASY_MC_AVG_RAW_DROP_WIN
+
+
+def _scale_coefficients(coefficients: list[float], scale: float) -> list[float]:
+    return [round(c * scale, 2) for c in coefficients]
+
+
+EASY_14 = _scale_coefficients(_EASY_14_BASE, _EASY_RTP_SCALE)
+
 COEFFICIENT_SETS: list[list[list[float]]] = [
-    [
-        [18, 3.2, 1.6, 1.1, 1, 0.5, 0.3, 0.5, 1, 1.1, 1.6, 3.2, 18],
-    ]
-    * 13,
+    [list(EASY_14)] * 13,
     [
         [33, 11, 4, 2, 1.1, 0.6, 0.3, 0.6, 1.1, 2, 4, 11, 33],
     ]
@@ -24,6 +38,12 @@ COEFFICIENT_SETS: list[list[list[float]]] = [
 ROW_COUNT_OPTIONS = (10, 14, 20)
 BALLS_PER_DROP_OPTIONS = (10, 20, 50)
 DIFFICULTY_COUNT = 4
+
+# Meter / feature (aligned with apps/plinko game-logic/constants.ts)
+SPIN_METER_MAX = 10
+BONUS_METER_MAX = 20
+# Per-ball chance to award a bonus-meter coin peg hit (independent of pocket).
+BONUS_PEG_HIT_PROB = 0.14
 
 
 def row_tier_index(row_count: int) -> int:

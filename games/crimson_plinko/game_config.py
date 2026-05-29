@@ -31,11 +31,16 @@ class GameConfig(Config):
         self.min_bet = 0.01
         self.max_bet = 1000.0
 
+        # Default drop matches sim conditions. Stake base mode cost must be 1.0x; payout
+        # multipliers are normalized to return-per-drop in game_override.update_final_win.
+        self.balls_per_drop = 10
+        self.stake_per_ball = 1.0
+
         base_conditions = {
             "difficulty": 0,
             "row_count": 14,
-            "balls_per_drop": 10,
-            "stake_per_ball": 1.0,
+            "balls_per_drop": self.balls_per_drop,
+            "stake_per_ball": self.stake_per_ball,
             "reel_weights": {},
             "force_wincap": False,
             "force_freegame": False,

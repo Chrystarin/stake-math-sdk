@@ -29,11 +29,13 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
 if __name__ == "__main__":
     num_threads = 4
     batching_size = 5000
-    compression = False
+    # Local dev defaults to uncompressed books (.jsonl) for sync-math-books.
+    # Set PLINKO_BOOKS_COMPRESSION=1 when generating Stake Engine publish payloads.
+    compression = os.getenv("PLINKO_BOOKS_COMPRESSION", "0").lower() in {"1", "true", "yes"}
     profiling = False
 
     num_sim_args = {
-        "base": 100,
+        "base": 10000,
     }
 
     run_conditions = {"run_sims": True}
