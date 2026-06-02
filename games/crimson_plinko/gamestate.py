@@ -94,6 +94,7 @@ class GameState(GameStateOverride):
                         self,
                         multiplier=event["multiplier"],
                         segment=event["segment"],
+                        amount=event.get("amount", 0.0),
                     )
 
             emit_plinko_settlement(self)

@@ -208,6 +208,7 @@ class GameCalculations(Executables):
                             "type": "freeSpinTrigger",
                             "segment": segment,
                             "multiplier": self._free_spin_segment_multiplier(segment),
+                            "amount": segment_win,
                         }
                     )
                     if bonus_roulette_balls is not None and bonus_outcomes is not None:

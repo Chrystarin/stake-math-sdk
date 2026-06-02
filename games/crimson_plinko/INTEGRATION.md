@@ -52,7 +52,7 @@ Imports the first N books from math `library/books/books_base.jsonl` into `src/s
 | `bonusMeter` | Bonus meter value after a coin-peg hit (`value`, `level`) |
 | `bonusRoulette` | Bonus wheel award (`freeBalls`) — presentation before `bonusRound` |
 | `bonusRound` | Authoritative bonus balls (`outcomes[]`, `level`, optional `ballsPlayed` for resume) |
-| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, plus `multiplier`) |
+| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = wager × segment) |
 | `setTotalWin` | Running win (amount × 100, SDK convention) |
 | `finalWin` | Round payout |
 
