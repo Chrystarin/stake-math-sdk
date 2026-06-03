@@ -22,7 +22,11 @@ class OutputFiles:
 
     def setup_output_directories(self):
         """Entrypoint for saving all output files."""
-        self.library_path = os.path.join(PATH_TO_GAMES, str(self.game_config.game_id), "library")
+        existing_library = getattr(self.game_config, "library_path", None)
+        if existing_library:
+            self.library_path = existing_library
+        else:
+            self.library_path = os.path.join(PATH_TO_GAMES, str(self.game_config.game_id), "library")
         self.temp_path = os.path.join(self.library_path, "temp_multi_threaded_files")
         self.config_path = os.path.join(self.library_path, "configs")
         self.force_path = os.path.join(self.library_path, "forces")

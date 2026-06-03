@@ -1,18 +1,25 @@
-"""Crimson Plinko math config — matches stake-web-sdk apps/plinko."""
+"""One-Eyed Willy's Plinko math config — matches stake-web-sdk apps/plinko."""
+
+import os
 
 from src.config.config import BetMode, Config
 from src.config.distributions import Distribution
+from src.config.paths import PATH_TO_GAMES
 
 from plinko_data import COEFFICIENT_SETS
+
+# Math package folder (make run GAME=crimson_plinko); RGS gameID is one_eyed_willys_plinko.
+PACKAGE_DIR = "crimson_plinko"
 
 
 class GameConfig(Config):
     def __init__(self):
         super().__init__()
-        self.game_id = "crimson_plinko"
-        self.provider_name = "crimson"
+        self.game_id = "one_eyed_willys_plinko"
+        self.game_name = "one_eyed_willys_plinko"
+        self.provider_name = "casino_tv"
         self.provider_number = 0
-        self.working_name = "crimson_plinko"
+        self.working_name = "One-Eyed Willy's Plinko"
         self.wincap = 1000.0
         self.win_type = "other"
         self.rtp = 0.97
@@ -64,3 +71,9 @@ class GameConfig(Config):
                 ],
             ),
         ]
+
+    def construct_paths(self) -> None:
+        """Keep library output under games/crimson_plinko while publishing one_eyed_willys_plinko."""
+        self.reels_path = os.path.join(PATH_TO_GAMES, PACKAGE_DIR, "reels")
+        self.library_path = os.path.join(PATH_TO_GAMES, PACKAGE_DIR, "library")
+        self.publish_path = os.path.join(PATH_TO_GAMES, PACKAGE_DIR, "library", "publish_files")

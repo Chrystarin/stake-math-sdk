@@ -1,10 +1,10 @@
-# Crimson Plinko — Math SDK ↔ Web SDK
+# One-Eyed Willy's Plinko — Math SDK ↔ Web SDK
 
 ## Game ID
 
-Both sides use **`crimson_plinko`**:
+Both sides use **`one_eyed_willys_plinko`** / provider **`casino_tv`**:
 
-- Math: `games/crimson_plinko/game_config.py`
+- Math: `games/crimson_plinko/game_config.py` (package folder `crimson_plinko`; run via `make run GAME=crimson_plinko`)
 - Web: `apps/plinko/src/game/config.ts`
 
 ## Generate math

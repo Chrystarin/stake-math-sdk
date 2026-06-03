@@ -9,6 +9,7 @@ from src.state.run_sims import create_books
 from src.write_data.write_configs import generate_configs
 
 from plinko_data import COEFFICIENT_SETS
+from publish_verify import sync_publish_files
 
 
 def write_plinko_fe_config(gamestate: GameState) -> None:
@@ -53,7 +54,9 @@ if __name__ == "__main__":
             compression,
             profiling,
         )
+    sync_publish_files(gamestate)
     generate_configs(gamestate)
     write_plinko_fe_config(gamestate)
     print(f"Done. Books: {gamestate.output_files.book_path}")
+    print(f"Publish: {gamestate.output_files.publish_path}")
     print(f"FE config: {gamestate.output_files.config_path}")
