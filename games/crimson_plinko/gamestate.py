@@ -32,20 +32,17 @@ class GameState(GameStateOverride):
         while self.repeat:
             self.reset_book()
 
-            difficulty = int(conditions.get("difficulty", 0))
             row_count = int(conditions.get("row_count", 14))
             balls_per_drop = int(conditions.get("balls_per_drop", 10))
             stake_per_ball = float(conditions.get("stake_per_ball", 1.0))
 
             outcomes, total_win = self.build_drop_outcomes(
-                difficulty=difficulty,
                 row_count=row_count,
                 balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
             )
             feature_events, feature_win, self.server_spin_meter, self.server_bonus_meter, self.server_bonus_level = self.build_feature_meter_events(
                 outcomes=outcomes,
-                difficulty=difficulty,
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
                 spin_meter_start=self.server_spin_meter,
@@ -61,11 +58,10 @@ class GameState(GameStateOverride):
 
             plinko_drop_event(
                 self,
-                difficulty=difficulty,
                 row_count=row_count,
                 balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
-                coefficients=coefficients_for(difficulty, row_count),
+                coefficients=coefficients_for(row_count),
                 spin_meter_max=SPIN_METER_MAX,
                 bonus_meter_max=BONUS_METER_MAX,
                 spin_meter_start=spin_meter_at_bet_start,

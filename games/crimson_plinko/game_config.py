@@ -33,7 +33,7 @@ class GameConfig(Config):
         self.freespin_triggers = {self.basegame_type: {}, self.freegame_type: {}}
         self.anticipation_triggers = {self.basegame_type: 0, self.freegame_type: 0}
 
-        # Exported to frontend config (apps/plinko defaultCoefficientSets shape).
+        # Exported to frontend config (apps/plinko coefficientSets shape).
         self.plinko_coefficient_sets = COEFFICIENT_SETS
         self.min_bet = 0.01
         self.max_bet = 1000.0
@@ -44,7 +44,7 @@ class GameConfig(Config):
         self.stake_per_ball = 1.0
 
         base_conditions = {
-            "difficulty": 0,
+            "difficulty": 0,  # default variant (plinkoDrop.difficulty wire field)
             "row_count": 14,
             "balls_per_drop": self.balls_per_drop,
             "stake_per_ball": self.stake_per_ball,

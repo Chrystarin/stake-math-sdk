@@ -2,11 +2,12 @@
 
 from src.events.events import EventConstants, final_win_event
 
+from plinko_data import DEFAULT_VARIANT_ID
+
 
 def plinko_drop_event(
     gamestate,
     *,
-    difficulty: int,
     row_count: int,
     balls_per_drop: int,
     stake_per_ball: float,
@@ -22,7 +23,7 @@ def plinko_drop_event(
         {
             "index": len(gamestate.book.events),
             "type": "plinkoDrop",
-            "difficulty": difficulty,
+            "difficulty": DEFAULT_VARIANT_ID,
             "rowCount": row_count,
             "ballsPerDrop": balls_per_drop,
             "stakePerBall": stake_per_ball,

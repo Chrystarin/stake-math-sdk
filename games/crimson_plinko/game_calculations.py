@@ -28,12 +28,11 @@ class GameCalculations(Executables):
     def build_drop_outcomes(
         self,
         *,
-        difficulty: int,
         row_count: int,
         balls_per_drop: int,
         stake_per_ball: float,
     ) -> tuple[list[dict], float]:
-        coeffs = coefficients_for(difficulty, row_count)
+        coeffs = coefficients_for(row_count)
         if not coeffs:
             return [], 0.0
 
@@ -63,14 +62,12 @@ class GameCalculations(Executables):
     def build_bonus_round_package(
         self,
         *,
-        difficulty: int,
         row_count: int,
         stake_per_ball: float,
     ) -> tuple[int, list[dict], float]:
         """Sample bonus wheel balls and precompute authoritative bonus-drop outcomes."""
         free_balls = int(py_random.choice(self.BONUS_WHEEL_FREE_BALLS))
         outcomes, bonus_total_win = self.build_drop_outcomes(
-            difficulty=difficulty,
             row_count=row_count,
             balls_per_drop=free_balls,
             stake_per_ball=stake_per_ball,
@@ -81,14 +78,12 @@ class GameCalculations(Executables):
         self,
         events: list[dict],
         *,
-        difficulty: int,
         row_count: int,
         stake_per_ball: float,
         bonus_level: int,
     ) -> tuple[list[dict], float, int]:
         """Emit bonusRoulette + bonusRound and return (events, feature_win, next_level)."""
         free_balls, bonus_outcomes, bonus_drop_win = self.build_bonus_round_package(
-            difficulty=difficulty,
             row_count=row_count,
             stake_per_ball=stake_per_ball,
         )
@@ -109,7 +104,6 @@ class GameCalculations(Executables):
         self,
         segment: str,
         *,
-        difficulty: int,
         row_count: int,
         stake_per_ball: float,
         balls_in_drop: int,
@@ -118,7 +112,6 @@ class GameCalculations(Executables):
         current_bet_total = max(0.0, float(stake_per_ball) * float(balls_in_drop))
         if segment == "BONUS":
             free_balls, bonus_outcomes, bonus_total_win = self.build_bonus_round_package(
-                difficulty=difficulty,
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
             )
@@ -140,7 +133,6 @@ class GameCalculations(Executables):
         self,
         *,
         outcomes: list[dict],
-        difficulty: int,
         row_count: int,
         stake_per_ball: float,
         spin_meter_start: int = 0,
@@ -176,7 +168,6 @@ class GameCalculations(Executables):
                     bonus_meter = 0
                     events, bonus_drop_win, bonus_level = self._append_bonus_round_events(
                         events,
-                        difficulty=difficulty,
                         row_count=row_count,
                         stake_per_ball=stake_per_ball,
                         bonus_level=bonus_level,
@@ -197,7 +188,6 @@ class GameCalculations(Executables):
                     segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
                     segment_win, bonus_roulette_balls, bonus_outcomes = self._resolve_free_spin_segment(
                         segment,
-                        difficulty=difficulty,
                         row_count=row_count,
                         stake_per_ball=stake_per_ball,
                         balls_in_drop=balls_in_drop,

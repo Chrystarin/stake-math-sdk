@@ -20,7 +20,7 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     )
     with open(path, encoding="UTF-8") as f:
         fe = json.load(f)
-    fe["defaultCoefficientSets"] = COEFFICIENT_SETS
+    fe["coefficientSets"] = COEFFICIENT_SETS
     fe["minBet"] = gamestate.config.min_bet
     fe["maxBet"] = gamestate.config.max_bet
     with open(path, "w", encoding="UTF-8") as f:
