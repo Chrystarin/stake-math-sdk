@@ -11,6 +11,16 @@ Run simulations + configs:
   make run GAME=crimson_plinko
   (run.py rebuilds publish_files/books_base.jsonl.zst from books_base.json + LUT)
 
+Stake ACP shows "no change to publish" when upload hashes match the version already live.
+After math edits you must re-run sims (not only sync) and upload ALL of publish_files/:
+  index.json, lookUpTable_base_0.csv, books_base.jsonl.zst
+Upload under Math / books (not Front End). Verify books_base.jsonl.zst SHA changed in
+library/configs/config.json before publishing.
+
+Balls per drop:
+  UI tiers 10 / 20 / 50 are separate lookup strata (conditions.balls_per_drop).
+  Client sends balls_per_drop in play meta; books include matching outcome counts.
+
 Outputs:
   games/crimson_plinko/library/books/books_base.json
   games/crimson_plinko/library/publish_files/  (upload entire folder to Stake Engine)

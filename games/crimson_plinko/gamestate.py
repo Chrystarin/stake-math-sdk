@@ -10,7 +10,7 @@ from game_events import (
     spin_meter_event,
 )
 from game_override import GameStateOverride
-from plinko_data import BONUS_METER_MAX, SPIN_METER_MAX, coefficients_for
+from plinko_data import coefficients_for, scaled_bonus_meter_max, scaled_spin_meter_max
 
 
 class GameState(GameStateOverride):
@@ -35,6 +35,8 @@ class GameState(GameStateOverride):
             row_count = int(conditions.get("row_count", 14))
             balls_per_drop = int(conditions.get("balls_per_drop", 10))
             stake_per_ball = float(conditions.get("stake_per_ball", 1.0))
+            spin_meter_max = scaled_spin_meter_max(balls_per_drop)
+            bonus_meter_max = scaled_bonus_meter_max(balls_per_drop)
 
             outcomes, total_win = self.build_drop_outcomes(
                 row_count=row_count,
@@ -48,6 +50,8 @@ class GameState(GameStateOverride):
                 spin_meter_start=self.server_spin_meter,
                 bonus_meter_start=self.server_bonus_meter,
                 bonus_level_start=self.server_bonus_level,
+                spin_meter_max=spin_meter_max,
+                bonus_meter_max=bonus_meter_max,
             )
             total_win += feature_win
 
@@ -62,8 +66,8 @@ class GameState(GameStateOverride):
                 balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
                 coefficients=coefficients_for(row_count),
-                spin_meter_max=SPIN_METER_MAX,
-                bonus_meter_max=BONUS_METER_MAX,
+                spin_meter_max=spin_meter_max,
+                bonus_meter_max=bonus_meter_max,
                 spin_meter_start=spin_meter_at_bet_start,
                 bonus_meter_start=bonus_meter_at_bet_start,
                 bonus_level_start=bonus_level_at_bet_start,

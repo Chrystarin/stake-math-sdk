@@ -19,8 +19,24 @@ Use `compression = True` in `run.py` before publishing to RGS.
 
 ## Publish to Stake Engine
 
-Upload contents of `games/crimson_plinko/library/publish_files/` via ACP.  
+Upload **all three** files from `games/crimson_plinko/library/publish_files/` via ACP (Math / books, not Front End):
+
+- `index.json`
+- `lookUpTable_base_0.csv`
+- `books_base.jsonl.zst`
+
 The RGS `play/` response `state` array must match book `events` from math (same as `apps/lines`).
+
+### "No change to publish"
+
+Stake compares SHA-256 hashes of uploaded files to the version already deployed. You will see **no change** when:
+
+1. **`make run GAME=crimson_plinko` was not re-run** after editing math — `publish_files/` is unchanged.
+2. **Only payout logic changed** but no book IDs / LUT weights changed (e.g. no books contained `freeSpinTrigger` before stratified `spin_meter_start` distributions were added).
+3. **Wrong upload target** — front-end `apps/plinko/build/` is separate from math `publish_files/`.
+4. **Incomplete upload** — missing `books_base.jsonl.zst` (required by `index.json`).
+
+After `make run`, confirm `library/configs/config.json` → `bookShelfConfig[0].booksFile.sha256` differs from the last published value, then upload and publish math again.
 
 ## Run web client
 
@@ -52,7 +68,7 @@ Imports the first N books from math `library/books/books_base.jsonl` into `src/s
 | `bonusMeter` | Bonus meter value after a coin-peg hit (`value`, `level`) |
 | `bonusRoulette` | Bonus wheel award (`freeBalls`) — presentation before `bonusRound` |
 | `bonusRound` | Authoritative bonus balls (`outcomes[]`, `level`, optional `ballsPlayed` for resume) |
-| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = wager × segment) |
+| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = round drop win × segment multiplier). **Wallet payout is in book `payoutMultiplier` / `finalWin` — settled by RGS `/wallet/end-round`, not `/bet/action`.** |
 | `setTotalWin` | Running win (amount × 100, SDK convention) |
 | `finalWin` | Round payout |
 
@@ -62,8 +78,9 @@ Meter fill chances and feature triggers are authored in math; the client animate
 
 ## Session meter persistence
 
-Send current meters on each `play` request via bet `meta` (snake_case or camelCase):
+Send current meters and drop shape on each `play` request via bet `meta` (snake_case or camelCase):
 
+- `balls_per_drop` — must match UI tier (`10`, `20`, or `50`; lookup books are stratified per tier)
 - `spin_meter_start` / `spinMeter`
 - `bonus_meter_start` / `bonusMeter`
 - `bonus_level_start` / `bonusLevel`

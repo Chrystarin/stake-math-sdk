@@ -100,27 +100,46 @@ class GameCalculations(Executables):
         next_level = int(bonus_level) + 1
         return events, bonus_drop_win, next_level
 
+    def _drop_win_from_outcomes(self, outcomes: list[dict], stake_per_ball: float) -> float:
+        """Sum slot payouts for the drop (spin-pocket balls pay 0)."""
+        stake = max(0.0, float(stake_per_ball))
+        total = 0.0
+        for outcome in outcomes:
+            if outcome.get("hitSpinSlot"):
+                continue
+            total += stake * float(outcome.get("multiplier", 0) or 0)
+        return total
+
     def _resolve_free_spin_segment(
         self,
         segment: str,
         *,
+        round_win: float,
         row_count: int,
         stake_per_ball: float,
-        balls_in_drop: int,
-    ) -> tuple[float, int | None, list[dict] | None]:
-        """Payout from one free-spin wheel segment; returns (win, freeBalls?, bonusOutcomes?)."""
-        current_bet_total = max(0.0, float(stake_per_ball) * float(balls_in_drop))
+    ) -> tuple[float, float, int | None, list[dict] | None]:
+        """
+        Free-spin wheel payout applied to the round's drop win.
+
+        Returns (feature_win_increment, display_amount, freeBalls?, bonusOutcomes?).
+        `display_amount` is round_win × segment multiplier (total scaled win).
+        `feature_win_increment` adjusts settlement so final = round_win × multiplier.
+        """
+        base_win = max(0.0, float(round_win))
         if segment == "BONUS":
             free_balls, bonus_outcomes, bonus_total_win = self.build_bonus_round_package(
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
             )
-            return bonus_total_win, free_balls, bonus_outcomes
+            bonus_win = max(0.0, float(bonus_total_win))
+            return bonus_win, bonus_win, free_balls, bonus_outcomes
         if segment.endswith("X"):
             numeric = float(segment[:-1])
             if numeric > 0:
-                return current_bet_total * numeric, None, None
-        return 0.0, None, None
+                scaled_total = base_win * numeric
+                feature_increment = scaled_total - base_win
+                return feature_increment, scaled_total, None, None
+        return 0.0, 0.0, None, None
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:
         if segment == "BONUS":
@@ -138,6 +157,8 @@ class GameCalculations(Executables):
         spin_meter_start: int = 0,
         bonus_meter_start: int = 0,
         bonus_level_start: int = 0,
+        spin_meter_max: int = SPIN_METER_MAX,
+        bonus_meter_max: int = BONUS_METER_MAX,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -152,11 +173,11 @@ class GameCalculations(Executables):
         spin_meter = max(0, int(spin_meter_start))
         bonus_meter = max(0, int(bonus_meter_start))
         bonus_level = max(0, int(bonus_level_start))
-        balls_in_drop = len(outcomes)
+        drop_win = self._drop_win_from_outcomes(outcomes, stake_per_ball)
 
         for outcome in outcomes:
             if outcome.get("hitBonusPeg"):
-                bonus_meter = min(BONUS_METER_MAX, bonus_meter + 1)
+                bonus_meter = min(bonus_meter_max, bonus_meter + 1)
                 events.append(
                     {
                         "type": "bonusMeter",
@@ -164,7 +185,7 @@ class GameCalculations(Executables):
                         "level": bonus_level,
                     }
                 )
-                if bonus_meter >= BONUS_METER_MAX:
+                if bonus_meter >= bonus_meter_max:
                     bonus_meter = 0
                     events, bonus_drop_win, bonus_level = self._append_bonus_round_events(
                         events,
@@ -175,30 +196,35 @@ class GameCalculations(Executables):
                     feature_win += bonus_drop_win
 
             if outcome.get("hitSpinSlot"):
-                spin_meter = min(SPIN_METER_MAX, spin_meter + 1)
+                spin_meter = min(spin_meter_max, spin_meter + 1)
                 events.append(
                     {
                         "type": "spinMeter",
                         "value": spin_meter,
-                        "max": SPIN_METER_MAX,
+                        "max": spin_meter_max,
                     }
                 )
-                if spin_meter >= SPIN_METER_MAX:
+                if spin_meter >= spin_meter_max:
                     spin_meter = 0
                     segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
-                    segment_win, bonus_roulette_balls, bonus_outcomes = self._resolve_free_spin_segment(
+                    (
+                        feature_increment,
+                        display_amount,
+                        bonus_roulette_balls,
+                        bonus_outcomes,
+                    ) = self._resolve_free_spin_segment(
                         segment,
+                        round_win=drop_win,
                         row_count=row_count,
                         stake_per_ball=stake_per_ball,
-                        balls_in_drop=balls_in_drop,
                     )
-                    feature_win += segment_win
+                    feature_win += feature_increment
                     events.append(
                         {
                             "type": "freeSpinTrigger",
                             "segment": segment,
                             "multiplier": self._free_spin_segment_multiplier(segment),
-                            "amount": segment_win,
+                            "amount": display_amount,
                         }
                     )
                     if bonus_roulette_balls is not None and bonus_outcomes is not None:
