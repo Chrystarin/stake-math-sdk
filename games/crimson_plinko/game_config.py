@@ -96,7 +96,7 @@ class GameConfig(Config):
 
         # multipliers are normalized to return-per-drop in game_override.update_final_win.
 
-        self.balls_per_drop = BALLS_PER_DROP_OPTIONS[0]
+        self.balls_per_drop = 10
 
         self.stake_per_ball = 1.0
 

@@ -80,7 +80,7 @@ Meter fill chances and feature triggers are authored in math; the client animate
 
 Send current meters and drop shape on each `play` request via bet `meta` (snake_case or camelCase):
 
-- `balls_per_drop` — must match UI tier (`10`, `20`, or `50`; lookup books are stratified per tier)
+- `balls_per_drop` — must match UI tier (`1`, `10`, `20`, or `50`; lookup books are stratified per tier)
 - `spin_meter_start` / `spinMeter`
 - `bonus_meter_start` / `bonusMeter`
 - `bonus_level_start` / `bonusLevel`

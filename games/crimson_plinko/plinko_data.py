@@ -27,7 +27,7 @@ DEFAULT_SLOT_MULTIPLIERS = _scale_coefficients(_DEFAULT_14_BASE, _DEFAULT_RTP_SC
 COEFFICIENT_SETS: list[list[float]] = [list(DEFAULT_SLOT_MULTIPLIERS)] * 13
 
 ROW_COUNT_OPTIONS = (10, 14, 20)
-BALLS_PER_DROP_OPTIONS = (10, 20, 50)
+BALLS_PER_DROP_OPTIONS = (1, 10, 20, 50)
 
 # Meter / feature (aligned with apps/plinko game-logic/constants.ts)
 SPIN_METER_MAX = 10
@@ -35,6 +35,7 @@ BONUS_METER_MAX = 20
 
 # Balls-per-drop tier scaling (apps/plinko METER_TIER_CONFIG).
 METER_TIER_CONFIG: dict[int, dict[str, float]] = {
+    1: {"start_ratio": 0.0, "max_ratio": 0.1},
     10: {"start_ratio": 0.0, "max_ratio": 1.0},
     20: {"start_ratio": 0.125, "max_ratio": 1.125},
     50: {"start_ratio": 0.25, "max_ratio": 1.25},

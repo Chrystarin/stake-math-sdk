@@ -18,7 +18,7 @@ Upload under Math / books (not Front End). Verify books_base.jsonl.zst SHA chang
 library/configs/config.json before publishing.
 
 Balls per drop:
-  UI tiers 10 / 20 / 50 are separate lookup strata (conditions.balls_per_drop).
+  UI tiers 1 / 10 / 20 / 50 are separate lookup strata (conditions.balls_per_drop).
   Client sends balls_per_drop in play meta; books include matching outcome counts.
 
 Outputs:
