@@ -91,13 +91,14 @@ def bonus_round_event(
 
 
 def free_spin_trigger_event(gamestate, *, multiplier: float, segment: str, amount: float = 0.0) -> None:
+    """`amount` is round drop win × segment multiplier in ×100 currency units at book stake."""
     gamestate.book.add_event(
         {
             "index": len(gamestate.book.events),
             "type": "freeSpinTrigger",
             "multiplier": float(multiplier),
             "segment": str(segment),
-            "amount": float(amount),
+            "amount": int(round(float(amount) * 100, 0)),
         }
     )
 

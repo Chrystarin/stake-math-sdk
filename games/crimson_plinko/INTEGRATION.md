@@ -68,13 +68,13 @@ Imports the first N books from math `library/books/books_base.jsonl` into `src/s
 | `bonusMeter` | Bonus meter value after a coin-peg hit (`value`, `level`) |
 | `bonusRoulette` | Bonus wheel award (`freeBalls`) — presentation before `bonusRound` |
 | `bonusRound` | Authoritative bonus balls (`outcomes[]`, `level`, optional `ballsPlayed` for resume) |
-| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = round drop win × segment multiplier). **Wallet payout is in book `payoutMultiplier` / `finalWin` — settled by RGS `/wallet/end-round`, not `/bet/action`.** |
+| `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = round drop win × segment multiplier in **×100 currency units at book stake**, same encoding as `finalWin`). **Wallet payout is in book `payoutMultiplier` / `finalWin` — settled by RGS `/wallet/end-round`, not `/bet/action`.** |
 | `setTotalWin` | Running win (amount × 100, SDK convention) |
 | `finalWin` | Round payout |
 
 Meter fill chances and feature triggers are authored in math; the client animates flags from `outcomes`, plays feature book events, and runs `bonusRound` balls one at a time before settlement.
 
-**Publish books:** `spinMeterStart` / `bonusMeterStart` on `plinkoDrop` are informational for live RGS (session-injected conditions). Lookup-table books are generated with starts at **0** — the web client does not apply them on load; session carry-over uses RGS `meta` + client storage between bets only.
+**Publish books:** `spinMeterStart` / `bonusMeterStart` on `plinkoDrop` echo distribution `conditions` for the served stratum (`spin_meter_mid` / `high` / `full` per balls tier). Live RGS must select a book whose `spin_meter_start` matches play `meta` when the session meter is partially filled; otherwise `freeSpinTrigger` and combined payout will be missing from the book.
 
 ## Session meter persistence
 
