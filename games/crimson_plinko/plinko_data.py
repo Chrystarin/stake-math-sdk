@@ -3,26 +3,16 @@
 import math
 
 # row tier index (row_count - 8) -> slot multipliers
-# Row tiers 8..20 map to indices 0..12. Tables match 14-row crimson board (13 slots).
+# Row tiers 8..20 map to indices 0..12. Tables match 14-row board (15 slots).
 
-# Default board — calibrated for sim; raw drop win is normalized to
-# payoutMultiplier with base mode cost 1.0 (see game_override.update_final_win).
-_DEFAULT_14_BASE = [18, 3.2, 1.6, 1.1, 1, 0.5, 0.3, 0.5, 1, 1.1, 1.6, 3.2, 18]
-_DEFAULT_MC_AVG_RAW_DROP_WIN = 6.987  # E[sum(stake*mult)] per drop, stake_per_ball=1
-_TARGET_RTP = 0.97
-_DEFAULT_BALLS_PER_DROP = 10.0
-# Target E[payoutMultiplier] = RTP * cost = 0.97 after dividing raw win by balls*stake.
-_DEFAULT_RTP_SCALE = (_TARGET_RTP * _DEFAULT_BALLS_PER_DROP) / _DEFAULT_MC_AVG_RAW_DROP_WIN
+# Canonical board — same literal values as apps/plinko `BOARD_SLOT_MULTIPLIERS`.
+# Center index 7 is the spin pocket (0× payout; meter fill only).
+BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 10, 2, 0.5, 0.2, 0, 0.2, 0.5, 2, 10, 20, 50, 100]
 
 # Serialized on plinkoDrop.difficulty for RGS / published math compatibility.
 DEFAULT_VARIANT_ID = 0
 
-
-def _scale_coefficients(coefficients: list[float], scale: float) -> list[float]:
-    return [round(c * scale, 2) for c in coefficients]
-
-
-DEFAULT_SLOT_MULTIPLIERS = _scale_coefficients(_DEFAULT_14_BASE, _DEFAULT_RTP_SCALE)
+DEFAULT_SLOT_MULTIPLIERS = list(BOARD_SLOT_MULTIPLIERS)
 
 COEFFICIENT_SETS: list[list[float]] = [list(DEFAULT_SLOT_MULTIPLIERS)] * 13
 
@@ -67,6 +57,8 @@ def spin_meter_strata_starts(balls_per_drop: int) -> tuple[int, int, int]:
     mid = max(max_spin // 2, 1)
     near_full = max(max_spin - 1, 1)
     return mid, max(near_full - 1, 0), near_full
+
+
 # Per-ball chance to award a bonus-meter coin peg hit (independent of pocket).
 BONUS_PEG_HIT_PROB = 0.14
 
