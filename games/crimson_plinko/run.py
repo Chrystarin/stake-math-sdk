@@ -8,8 +8,8 @@ from gamestate import GameState
 from src.state.run_sims import create_books
 from src.write_data.write_configs import generate_configs
 
-from plinko_data import COEFFICIENT_SETS
-from publish_verify import sync_publish_files
+from plinko_data import BALLS_PER_DROP_OPTIONS, COEFFICIENT_SETS, bet_mode_for_balls_per_drop
+from publish_verify import sync_all_publish_files
 
 
 def write_plinko_fe_config(gamestate: GameState) -> None:
@@ -35,8 +35,9 @@ if __name__ == "__main__":
     compression = os.getenv("PLINKO_BOOKS_COMPRESSION", "0").lower() in {"1", "true", "yes"}
     profiling = False
 
+    sims_per_tier = 2500
     num_sim_args = {
-        "base": 10000,
+        bet_mode_for_balls_per_drop(balls): sims_per_tier for balls in BALLS_PER_DROP_OPTIONS
     }
 
     run_conditions = {"run_sims": True}
@@ -54,7 +55,7 @@ if __name__ == "__main__":
             compression,
             profiling,
         )
-    sync_publish_files(gamestate)
+    sync_all_publish_files(gamestate)
     generate_configs(gamestate)
     write_plinko_fe_config(gamestate)
     print(f"Done. Books: {gamestate.output_files.book_path}")

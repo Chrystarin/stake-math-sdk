@@ -27,6 +27,18 @@ def _load_book_payouts_from_json(path: str) -> dict[int, int]:
     return {int(b["id"]): int(b["payoutMultiplier"]) for b in books}
 
 
+def _load_book_payouts_from_jsonl(path: str) -> dict[int, int]:
+    payouts: dict[int, int] = {}
+    with open(path, encoding="UTF-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            blob = json.loads(line)
+            payouts[int(blob["id"])] = int(blob["payoutMultiplier"])
+    return payouts
+
+
 def _load_book_payouts_from_zst(path: str) -> dict[int, int]:
     payouts: dict[int, int] = {}
     with open(path, "rb") as f:
@@ -64,21 +76,54 @@ def write_books_jsonl_zst(books: list[dict], dest_zst: str) -> None:
         f.write(compressor.compress(payload.encode("UTF-8")))
 
 
+def _resolve_book_payouts(
+    *,
+    books_json: str,
+    books_jsonl: str,
+    books_zst: str,
+) -> tuple[dict[int, int], bool]:
+    """
+    Load book payout multipliers from simulation output.
+
+    Returns (payouts, wrote_zst). When compression runs during sim, books are already
+    at books_zst — verify only and skip rebuilding the archive.
+    """
+    if os.path.isfile(books_json):
+        with open(books_json, encoding="UTF-8") as f:
+            data = json.load(f)
+        books = data if isinstance(data, list) else [data]
+        write_books_jsonl_zst(books, books_zst)
+        return {int(b["id"]): int(b["payoutMultiplier"]) for b in books}, True
+
+    if os.path.isfile(books_jsonl):
+        book_payouts = _load_book_payouts_from_jsonl(books_jsonl)
+        write_books_jsonl_zst(
+            [json.loads(line) for line in open(books_jsonl, encoding="UTF-8") if line.strip()],
+            books_zst,
+        )
+        return book_payouts, True
+
+    if os.path.isfile(books_zst):
+        return _load_book_payouts_from_zst(books_zst), False
+
+    raise FileNotFoundError(
+        f"Missing simulation books for publish sync. Expected one of: "
+        f"{books_json}, {books_jsonl}, {books_zst}. Run `make run GAME=crimson_plinko` first."
+    )
+
+
 def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
     """
-    Copy the latest lookup table into publish_files and rebuild books_base.jsonl.zst
-    from the current simulation output so ACP publish verification passes.
+    Copy the latest lookup table into publish_files and ensure books_{mode}.jsonl.zst
+    matches simulation output so ACP publish verification passes.
     """
     output = gamestate.output_files
     lut_src = output.get_final_lookup_name(betmode)
     lut_dst = output.lookups[betmode]["paths"]["optimized_lookup"]
     books_json = output.books[betmode]["paths"]["books_uncompressed"]
+    books_jsonl = books_json.replace(".json", ".jsonl") if books_json.endswith(".json") else books_json
     books_zst = output.books[betmode]["paths"]["books_compressed"]
 
-    if not os.path.isfile(books_json):
-        raise FileNotFoundError(
-            f"Missing simulation books at {books_json}. Run `make run GAME=crimson_plinko` first."
-        )
     if not os.path.isfile(lut_src):
         raise FileNotFoundError(f"Missing lookup table at {lut_src}.")
 
@@ -86,12 +131,11 @@ def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
     with open(lut_src, encoding="UTF-8") as src, open(lut_dst, "w", encoding="UTF-8") as dst:
         dst.write(src.read())
 
-    with open(books_json, encoding="UTF-8") as f:
-        data = json.load(f)
-    books = data if isinstance(data, list) else [data]
-    write_books_jsonl_zst(books, books_zst)
-
-    book_payouts = {int(b["id"]): int(b["payoutMultiplier"]) for b in books}
+    book_payouts, wrote_zst = _resolve_book_payouts(
+        books_json=books_json,
+        books_jsonl=books_jsonl,
+        books_zst=books_zst,
+    )
     mismatches = find_lut_book_mismatches(lut_dst, book_payouts)
     if mismatches:
         sample = mismatches[:5]
@@ -101,10 +145,20 @@ def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
             "Re-run simulations from a clean library/ temp folder."
         )
 
+    action = "rebuilt" if wrote_zst else "verified"
     print(
         f"Synced publish_files: {os.path.basename(lut_dst)}, "
-        f"{os.path.basename(books_zst)} ({len(books)} books)."
+        f"{os.path.basename(books_zst)} ({len(book_payouts)} books, {action})."
     )
+
+
+def sync_all_publish_files(gamestate, *, betmodes: list[str] | None = None) -> None:
+    """Rebuild publish_files for every configured bet mode."""
+    modes = betmodes
+    if modes is None:
+        modes = [bm.get_name() for bm in gamestate.config.bet_modes]
+    for betmode in modes:
+        sync_publish_files(gamestate, betmode=betmode)
 
 
 if __name__ == "__main__":
@@ -116,6 +170,6 @@ if __name__ == "__main__":
     from src.write_data.write_configs import generate_configs
 
     gs = GameState(GameConfig())
-    sync_publish_files(gs)
+    sync_all_publish_files(gs)
     generate_configs(gs)
     print("Updated library/configs/config.json hashes for publish_files.")

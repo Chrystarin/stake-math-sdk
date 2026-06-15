@@ -78,14 +78,20 @@ Meter fill chances and feature triggers are authored in math; the client animate
 
 ## Session meter persistence
 
-Send current meters and drop shape on each `play` request via bet `meta` (snake_case or camelCase):
+## Balls per drop (RGS bet modes)
 
-- `balls_per_drop` — must match UI tier (`1`, `10`, `20`, or `50`; lookup books are stratified per tier)
-- `spin_meter_start` / `spinMeter`
-- `bonus_meter_start` / `bonusMeter`
-- `bonus_level_start` / `bonusLevel`
+Stake Engine selects books by **`/wallet/play` `mode`**, not play `meta` alone. One published mode per tier:
 
-Math reads these from distribution `conditions` before each spin and echoes starting values on `plinkoDrop`. The web client also mirrors progress in `sessionStorage` keyed by `sessionID` for dev/resume.
+| UI balls | Play `mode` | Book criteria |
+|----------|-------------|---------------|
+| 1 | `baseone` | `basegame_balls_1` |
+| 10 | `baseten` | `basegame_balls_10` |
+| 20 | `basetwenty` | `basegame_balls_20` |
+| 50 | `basefifty` | `basegame_balls_50` |
+
+The web client sets `stateBet.activeBetModeKey` from the UI tier before each play (`plinkoBetMode.ts`).
+
+Optional play `meta` still mirrors distribution `conditions` (`row_count`, `balls_per_drop`, …) for forward compatibility.
 
 Regenerate books after math changes: `make run GAME=crimson_plinko`, then `pnpm run sync-math-books` in `apps/plinko`.
 

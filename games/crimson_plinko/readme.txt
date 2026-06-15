@@ -18,8 +18,10 @@ Upload under Math / books (not Front End). Verify books_base.jsonl.zst SHA chang
 library/configs/config.json before publishing.
 
 Balls per drop:
-  UI tiers 1 / 10 / 20 / 50 are separate lookup strata (conditions.balls_per_drop).
-  Client sends balls_per_drop in play meta; books include matching outcome counts.
+  RGS bet modes (use `/wallet/play` `mode`, not meta alone):
+    baseone (1 ball), baseten (10), basetwenty (20), basefifty (50)
+  Criteria in books: basegame_balls_1 / _10 / _20 / _50
+  Optional play meta still mirrors distribution conditions (row_count, etc.).
 
 Outputs:
   games/crimson_plinko/library/books/books_base.json
@@ -36,4 +38,6 @@ Storybook sample books:
   node ../../stake-web-sdk/apps/plinko/scripts/import-math-books.mjs
 
 See INTEGRATION.md in this folder.
-                                                                                                                                                                                                                                                                                                                
+
+
+PLINKO_BOOKS_COMPRESSION=1 make run GAME=crimson_plinko
