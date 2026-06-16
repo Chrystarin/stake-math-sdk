@@ -68,6 +68,54 @@ def find_lut_book_mismatches(lut_path: str, book_payouts: dict[int, int]) -> lis
     return mismatches
 
 
+def _nonspin_win(outcomes: list[dict]) -> float:
+    """Sum currency win for a list of ball outcomes (spin-pocket balls pay 0)."""
+    total = 0.0
+    for outcome in outcomes:
+        if outcome.get("hitSpinSlot"):
+            continue
+        total += float(outcome.get("amount", 0) or 0) * float(outcome.get("multiplier", 0) or 0)
+    return total
+
+
+def find_feature_payout_mismatches(books_json: str, *, wincap: float = 1000.0) -> list[tuple]:
+    """
+    Reconstruct the on-screen total from a book's events the way the client accumulates it
+    (base drop + bonus-round balls + free-spin multiply) and compare to `finalWin`.
+
+    This guards the exact bug that previously caused features to be stripped: book payout
+    must equal what the player watches land. Returns a list of (id, finalWin, expected).
+    """
+    if not os.path.isfile(books_json):
+        return []
+    with open(books_json, encoding="UTF-8") as f:
+        data = json.load(f)
+    books = data if isinstance(data, list) else [data]
+
+    mismatches: list[tuple] = []
+    for book in books:
+        events = book.get("events", [])
+        drop = next((e for e in events if e["type"] == "plinkoDrop"), None)
+        final = next((e for e in events if e["type"] == "finalWin"), None)
+        if drop is None or final is None:
+            continue
+        # payoutMultiplier is relative to the play amount (per-ball stake), not the total wager.
+        play_amount = max(1e-9, float(drop["stakePerBall"]))
+        round_drop = _nonspin_win(drop["outcomes"])
+        recon = round_drop
+        for event in events:
+            if event["type"] == "bonusRound":
+                recon += _nonspin_win(event["outcomes"])
+            elif event["type"] == "freeSpinTrigger":
+                mult = float(event.get("multiplier", 0) or 0)
+                if mult > 0:
+                    recon += round_drop * (mult - 1)
+        expected = round(min(recon / play_amount, wincap) * 100)
+        if abs(int(final["amount"]) - expected) > 1:
+            mismatches.append((book.get("id"), int(final["amount"]), expected))
+    return mismatches
+
+
 def write_books_jsonl_zst(books: list[dict], dest_zst: str) -> None:
     payload = "\n".join(json.dumps(book, separators=(",", ":")) for book in books) + "\n"
     compressor = zstd.ZstdCompressor()
@@ -143,6 +191,17 @@ def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
             "publish_files lookup table does not match book payoutMultiplier values "
             f"({len(mismatches)} mismatches). Examples (id, lut, book): {sample}. "
             "Re-run simulations from a clean library/ temp folder."
+        )
+
+    feature_mismatches = find_feature_payout_mismatches(
+        books_json, wincap=float(gamestate.config.wincap)
+    )
+    if feature_mismatches:
+        sample = feature_mismatches[:5]
+        raise RuntimeError(
+            f"Feature payout does not match displayed outcomes ({len(feature_mismatches)} books). "
+            f"Examples (id, finalWin, expected): {sample}. "
+            "Book finalWin must equal base drop + bonus-round balls + free-spin multiply."
         )
 
     action = "rebuilt" if wrote_zst else "verified"

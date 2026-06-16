@@ -1,7 +1,10 @@
 One-Eyed Willy's Plinko (one_eyed_willys_plinko)
 ================================================
 
-Math for stake-web-sdk apps/plinko. Book events: plinkoDrop, setTotalWin, finalWin.
+Math for stake-web-sdk apps/plinko. Book events: plinkoDrop, spinMeter, bonusMeter,
+freeSpinTrigger, bonusRoulette, bonusRound, setTotalWin, finalWin.
+Feature math (meters, wheels, bonus level-up) lives in game_calculations.py; tunables and
+the bonus level-up ball table (BONUS_LEVEL_BALLS) in plinko_data.py. See INTEGRATION.md.
 Package folder: games/crimson_plinko (make run GAME=crimson_plinko).
 
 Setup (repo root):
