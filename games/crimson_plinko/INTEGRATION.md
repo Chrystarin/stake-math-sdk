@@ -98,7 +98,34 @@ Level 1 entry balls come from the bonus wheel. While playing a level's balls, ea
 
 ## Session meter persistence
 
-Each book is one bet. Cross-bet meter carry-over relies on RGS selecting a stratum book whose `spin_meter_start` / `bonus_meter_start` matches the player's running meter, sent as play `meta` (`game/plinkoSessionMeters.ts:buildBetMetaPlayConditions`). `game_config.py` publishes `basegame` + `spin_meter_{mid,high,full}` + `bonus_meter_{mid,high,full}` strata per tier (see `_FEATURE_STRATA`). If RGS cannot match a stratum, the served book is still authoritative for that bet (features just won't carry across bets).
+Each book is one bet. The client persists the running spin / bonus meters across bets
+(`game/plinkoSessionMeters.ts`) and applies each book's meter events relative to the carried value,
+so the meters accumulate instead of resetting. The meter value rides along on play `meta`
+(`buildBetMetaPlayConditions`), but **production RGS does not select books by `meta`** (selection is
+weighted-random per `mode`), so meta is best-effort / for force-replay only.
+
+## Feature triggering — dedicated trigger modes
+
+Because RGS honors `mode` (not `meta`), a full meter triggers its feature via a **dedicated mode**,
+not by hoping RGS serves a meter-full stratum book. When the client's spin (or bonus) meter fills,
+it auto-places a bet in the matching trigger mode; that mode's books **always** emit the feature,
+so RGS computes the payout (no client-side trigger or payout). The triggering meter then resets.
+
+| When | Mode (per tier) | Book always emits | Condition flag |
+|------|-----------------|-------------------|----------------|
+| Spin meter full | `freespinone/ten/twenty/fifty` | `freeSpinTrigger` (+ bonus on `BONUS` segment) | `force_freespin` |
+| Bonus meter full | `bonusone/ten/twenty/fifty` | `bonusRoulette` + `bonusRound`(s) | `force_bonus` |
+
+- **Cost / free:** trigger modes simulate at the tier cost (so RTP math never divides by zero) but
+  are **published at `TRIGGER_MODE_COST` (0 = free)** via `run.py:set_trigger_mode_costs_free`. With
+  cost 0, RGS debit = `amount × 0` = 0 while payout still = `amount × payoutMultiplier`. **If your
+  RGS rejects a zero-cost play, set `TRIGGER_MODE_COST` (plinko_data.py) to a paid value and mirror
+  it in `apps/plinko/src/game/config.ts` — that's the only change.**
+- Client wiring: `plinkoBetMode.ts:plinkoActiveBetMode` (mode selection), `gameOrchestrator.ts:maybeAutoFireFeatureTrigger` (auto-fire when full + idle).
+- RTP: a free always-trigger mode is +EV in isolation — the feature is funded by base-game RTP, which is the deferred tuning step.
+
+The base modes still publish meter-start strata (`_FEATURE_STRATA`) so a meter can also fill+trigger
+within a single book when RGS happens to serve such a book.
 
 ## Balls per drop (RGS bet modes)
 

@@ -29,6 +29,9 @@ class GameState(GameStateOverride):
         spin_meter_at_bet_start = max(0, int(conditions.get("spin_meter_start", 0)))
         bonus_meter_at_bet_start = max(0, int(conditions.get("bonus_meter_start", 0)))
         bonus_level_at_bet_start = max(0, int(conditions.get("bonus_level_start", 0)))
+        # Dedicated trigger modes set these so the feature fires unconditionally this bet.
+        force_freespin = bool(conditions.get("force_freespin", False))
+        force_bonus = bool(conditions.get("force_bonus", False))
 
         self.repeat = True
         while self.repeat:
@@ -60,6 +63,8 @@ class GameState(GameStateOverride):
                 bonus_level_start=bonus_level_at_bet_start,
                 spin_meter_max=spin_meter_max,
                 bonus_meter_max=bonus_meter_max,
+                force_freespin=force_freespin,
+                force_bonus=force_bonus,
             )
             total_win += feature_win
 

@@ -11,6 +11,8 @@ from plinko_data import (
     COEFFICIENT_SETS,
     bet_mode_for_balls_per_drop,
     bonus_meter_strata_starts,
+    bonus_mode_for_balls,
+    freespin_mode_for_balls,
     spin_meter_strata_starts,
 )
 
@@ -71,6 +73,8 @@ class GameConfig(Config):
             spin_meter_start: int = 0,
             bonus_meter_start: int = 0,
             bonus_level_start: int = 0,
+            force_freespin: bool = False,
+            force_bonus: bool = False,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -80,6 +84,8 @@ class GameConfig(Config):
                 "spin_meter_start": int(spin_meter_start),
                 "bonus_meter_start": int(bonus_meter_start),
                 "bonus_level_start": int(bonus_level_start),
+                "force_freespin": bool(force_freespin),
+                "force_bonus": bool(force_bonus),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -120,6 +126,50 @@ class GameConfig(Config):
                     is_feature=True,
                     is_buybonus=False,
                     distributions=distributions,
+                ),
+            )
+
+            # Dedicated feature-trigger modes (client switches to these when a meter fills).
+            # Cost stays at the tier value for sims (RTP math divides by it); run.py republishes
+            # config.json with the free `TRIGGER_MODE_COST`.
+            self.bet_modes.append(
+                BetMode(
+                    name=freespin_mode_for_balls(balls),
+                    cost=float(balls),
+                    rtp=self.rtp,
+                    max_win=self.wincap,
+                    auto_close_disabled=False,
+                    is_feature=True,
+                    is_buybonus=False,
+                    distributions=[
+                        Distribution(
+                            criteria=f"freespin_balls_{balls}",
+                            quota=1.0,
+                            conditions=plinko_conditions(
+                                balls_per_drop=balls, force_freespin=True
+                            ),
+                        ),
+                    ],
+                ),
+            )
+            self.bet_modes.append(
+                BetMode(
+                    name=bonus_mode_for_balls(balls),
+                    cost=float(balls),
+                    rtp=self.rtp,
+                    max_win=self.wincap,
+                    auto_close_disabled=False,
+                    is_feature=True,
+                    is_buybonus=False,
+                    distributions=[
+                        Distribution(
+                            criteria=f"bonus_balls_{balls}",
+                            quota=1.0,
+                            conditions=plinko_conditions(
+                                balls_per_drop=balls, force_bonus=True
+                            ),
+                        ),
+                    ],
                 ),
             )
 

@@ -18,9 +18,30 @@ from plinko_data import (
     FREE_SPIN_SEGMENTS,
     METER_TIER_CONFIG,
     SPIN_METER_MAX,
+    TRIGGER_MODE_COST,
+    all_trigger_mode_names,
     bet_mode_for_balls_per_drop,
+    bonus_mode_for_balls,
+    freespin_mode_for_balls,
 )
 from publish_verify import sync_all_publish_files
+
+
+def set_trigger_mode_costs_free(gamestate: GameState) -> None:
+    """Republish config.json with the feature-trigger modes at `TRIGGER_MODE_COST`.
+
+    Sims run at the tier cost (so RTP math never divides by zero); the published cost is what RGS
+    uses for the debit. With cost 0 the feature is free once the meter fills.
+    """
+    path = os.path.join(gamestate.output_files.config_path, "config.json")
+    with open(path, encoding="UTF-8") as f:
+        config = json.load(f)
+    trigger_modes = set(all_trigger_mode_names())
+    for shelf in config.get("bookShelfConfig", []):
+        if shelf.get("name") in trigger_modes:
+            shelf["cost"] = TRIGGER_MODE_COST
+    with open(path, "w", encoding="UTF-8") as f:
+        json.dump(config, f, indent=4)
 
 
 def write_plinko_fe_config(gamestate: GameState) -> None:
@@ -62,9 +83,14 @@ if __name__ == "__main__":
     profiling = False
 
     sims_per_tier = 2500
+    sims_per_trigger = 1000
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): sims_per_tier for balls in BALLS_PER_DROP_OPTIONS
     }
+    # Feature-trigger modes are forced (always trigger), so fewer sims are needed.
+    for balls in BALLS_PER_DROP_OPTIONS:
+        num_sim_args[freespin_mode_for_balls(balls)] = sims_per_trigger
+        num_sim_args[bonus_mode_for_balls(balls)] = sims_per_trigger
 
     run_conditions = {"run_sims": True}
 
@@ -83,6 +109,7 @@ if __name__ == "__main__":
         )
     sync_all_publish_files(gamestate)
     generate_configs(gamestate)
+    set_trigger_mode_costs_free(gamestate)
     write_plinko_fe_config(gamestate)
     print(f"Done. Books: {gamestate.output_files.book_path}")
     print(f"Publish: {gamestate.output_files.publish_path}")

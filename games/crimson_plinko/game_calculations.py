@@ -160,6 +160,8 @@ class GameCalculations(Executables):
         bonus_level_start: int = 0,
         spin_meter_max: int = SPIN_METER_MAX,
         bonus_meter_max: int = BONUS_METER_MAX,
+        force_freespin: bool = False,
+        force_bonus: bool = False,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -168,6 +170,10 @@ class GameCalculations(Executables):
         is the extra win on top of the base drop win, so settlement totals to the displayed
         result: free-spin `NX` scales the whole base drop win; bonus rounds add their own
         precomputed ball wins.
+
+        `force_freespin` / `force_bonus` are set by the dedicated trigger modes (selected by the
+        client when a meter is full): the feature fires unconditionally and the meter resets,
+        instead of walking per-ball meter hits.
         """
         if not outcomes:
             return [], 0.0, spin_meter_start, bonus_meter_start, bonus_level_start
@@ -178,6 +184,46 @@ class GameCalculations(Executables):
         bonus_meter = max(0, int(bonus_meter_start))
         bonus_level = max(0, int(bonus_level_start))
         drop_win = self._drop_win_from_outcomes(outcomes, stake_per_ball)
+
+        # Trigger modes: the meter is full, so fire the feature now and reset that meter.
+        if force_freespin:
+            segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
+            multiplier = self._free_spin_segment_multiplier(segment)
+            if segment == "BONUS":
+                events.append(
+                    {"type": "freeSpinTrigger", "segment": segment, "multiplier": 0.0, "amount": 0.0}
+                )
+                bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
+                    row_count=row_count,
+                    stake_per_ball=stake_per_ball,
+                    bonus_meter_max=bonus_meter_max,
+                    level_start=bonus_level,
+                )
+                events.extend(bonus_events)
+                feature_win += bonus_win
+            else:
+                scaled_total = drop_win * multiplier if multiplier > 0 else drop_win
+                feature_win += scaled_total - drop_win
+                events.append(
+                    {
+                        "type": "freeSpinTrigger",
+                        "segment": segment,
+                        "multiplier": multiplier,
+                        "amount": scaled_total,
+                    }
+                )
+            return events, feature_win, 0, bonus_meter, bonus_level
+
+        if force_bonus:
+            bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
+                row_count=row_count,
+                stake_per_ball=stake_per_ball,
+                bonus_meter_max=bonus_meter_max,
+                level_start=bonus_level,
+            )
+            events.extend(bonus_events)
+            feature_win += bonus_win
+            return events, feature_win, spin_meter, 0, bonus_level
 
         for outcome in outcomes:
             if outcome.get("hitBonusPeg"):

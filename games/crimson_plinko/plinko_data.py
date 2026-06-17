@@ -42,6 +42,40 @@ def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
     return BET_MODE_BY_BALLS_PER_DROP.get(balls, "baseten")
 
 
+# Dedicated feature-trigger modes (per balls-per-drop tier). The client switches to these when a
+# meter fills, so RGS reliably serves a book that triggers the feature (mode selection is honored,
+# unlike play `meta`). Published cost is `TRIGGER_MODE_COST` (0 = free); sims still run at the tier
+# cost so RTP math never divides by zero.
+FREESPIN_MODE_BY_BALLS: dict[int, str] = {
+    1: "freespinone",
+    10: "freespinten",
+    20: "freespintwenty",
+    50: "freespinfifty",
+}
+BONUS_MODE_BY_BALLS: dict[int, str] = {
+    1: "bonusone",
+    10: "bonusten",
+    20: "bonustwenty",
+    50: "bonusfifty",
+}
+
+# Published cost for the trigger modes. 0 = free feature when the meter fills. If your RGS rejects
+# a zero-cost play, set this to a paid value (e.g. the tier balls count) — that's the only change.
+TRIGGER_MODE_COST = 0.0
+
+
+def freespin_mode_for_balls(balls_per_drop: int) -> str:
+    return FREESPIN_MODE_BY_BALLS.get(int(balls_per_drop), "freespinten")
+
+
+def bonus_mode_for_balls(balls_per_drop: int) -> str:
+    return BONUS_MODE_BY_BALLS.get(int(balls_per_drop), "bonusten")
+
+
+def all_trigger_mode_names() -> list[str]:
+    return list(FREESPIN_MODE_BY_BALLS.values()) + list(BONUS_MODE_BY_BALLS.values())
+
+
 def row_tier_index(row_count: int) -> int:
     return max(0, min(row_count - 8, 12))
 
