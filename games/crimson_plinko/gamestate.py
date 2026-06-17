@@ -32,6 +32,9 @@ class GameState(GameStateOverride):
         # Dedicated trigger modes set these so the feature fires unconditionally this bet.
         force_freespin = bool(conditions.get("force_freespin", False))
         force_bonus = bool(conditions.get("force_bonus", False))
+        # Base modes set this: meters fill (book-authoritative) but the feature is not fired
+        # in-drop — a full meter carries over and the trigger mode fires it on the next bet.
+        suppress_features = bool(conditions.get("suppress_features", False))
 
         self.repeat = True
         while self.repeat:
@@ -65,6 +68,7 @@ class GameState(GameStateOverride):
                 bonus_meter_max=bonus_meter_max,
                 force_freespin=force_freespin,
                 force_bonus=force_bonus,
+                suppress_features=suppress_features,
             )
             total_win += feature_win
 

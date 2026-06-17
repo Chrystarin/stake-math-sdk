@@ -162,6 +162,7 @@ class GameCalculations(Executables):
         bonus_meter_max: int = BONUS_METER_MAX,
         force_freespin: bool = False,
         force_bonus: bool = False,
+        suppress_features: bool = False,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -174,6 +175,13 @@ class GameCalculations(Executables):
         `force_freespin` / `force_bonus` are set by the dedicated trigger modes (selected by the
         client when a meter is full): the feature fires unconditionally and the meter resets,
         instead of walking per-ball meter hits.
+
+        `suppress_features` is set by the base bet modes: the meters still fill and emit
+        spin/bonusMeter events (so the client keeps an authoritative, book-driven meter), but the
+        feature is NOT fired in-drop. A full meter simply carries over and the client auto-fires the
+        dedicated trigger mode on the next bet — so base RTP is exactly the per-ball board EV across
+        every tier (no tier-dependent in-drop feature inflation), while the feature itself is still
+        delivered server-authoritatively via the trigger mode (payout-consistency invariant intact).
         """
         if not outcomes:
             return [], 0.0, spin_meter_start, bonus_meter_start, bonus_level_start
@@ -231,7 +239,8 @@ class GameCalculations(Executables):
                 events.append(
                     {"type": "bonusMeter", "value": bonus_meter, "level": bonus_level}
                 )
-                if bonus_meter >= bonus_meter_max:
+                # Base modes: keep the meter full (carry over) and let the trigger mode fire it.
+                if bonus_meter >= bonus_meter_max and not suppress_features:
                     bonus_meter = 0
                     bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
                         row_count=row_count,
@@ -247,7 +256,8 @@ class GameCalculations(Executables):
                 events.append(
                     {"type": "spinMeter", "value": spin_meter, "max": spin_meter_max}
                 )
-                if spin_meter >= spin_meter_max:
+                # Base modes: keep the meter full (carry over) and let the trigger mode fire it.
+                if spin_meter >= spin_meter_max and not suppress_features:
                     spin_meter = 0
                     segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
                     multiplier = self._free_spin_segment_multiplier(segment)

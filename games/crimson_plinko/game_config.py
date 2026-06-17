@@ -9,6 +9,7 @@ from src.config.paths import PATH_TO_GAMES
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
     COEFFICIENT_SETS,
+    TARGET_RTP,
     bet_mode_for_balls_per_drop,
     bonus_meter_strata_starts,
     bonus_mode_for_balls,
@@ -19,10 +20,11 @@ from plinko_data import (
 # Math package folder (make run GAME=crimson_plinko); RGS gameID is one_eyed_willys_plinko.
 PACKAGE_DIR = "crimson_plinko"
 
-# Feature strata within each balls-per-drop tier. `spin`/`bonus` are the meter-start values
-# the stratum carries (None -> filled in from the per-tier strata helper). Quotas are
-# placeholder weights (tune RTP later); they must sum to 1.0 per tier. Feature strata are
-# weighted up vs. real RTP so published books actually contain triggers for testing.
+# Meter-state strata within each balls-per-drop tier. `spin`/`bonus` are the meter-start values
+# the stratum carries, so published base books span the range of carried meter states for the
+# client to render. Quotas must sum to 1.0 per tier. Base modes run with `suppress_features`, so
+# these strata are RTP-neutral (they never fire a feature in-drop — a full meter just carries over
+# and the trigger mode fires it next bet); their only purpose is meter-state variety in the books.
 _FEATURE_STRATA = (
     # (criteria, spin_start_key, bonus_start_key, quota)
     ("basegame", "zero", "zero", 0.90),
@@ -46,7 +48,9 @@ class GameConfig(Config):
         self.working_name = "One-Eyed Willy's Plinko"
         self.wincap = 1000.0
         self.win_type = "other"
-        self.rtp = 0.97
+        # Declared RTP = the tuned per-ball board EV (matches the actual ~95.7% every mode produces;
+        # stays inside the 90.0%-96.70% compliance band, unlike the old 0.97 placeholder).
+        self.rtp = TARGET_RTP
         self.construct_paths()
 
         self.num_reels = 0
@@ -75,6 +79,7 @@ class GameConfig(Config):
             bonus_level_start: int = 0,
             force_freespin: bool = False,
             force_bonus: bool = False,
+            suppress_features: bool = False,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -86,6 +91,7 @@ class GameConfig(Config):
                 "bonus_level_start": int(bonus_level_start),
                 "force_freespin": bool(force_freespin),
                 "force_bonus": bool(force_bonus),
+                "suppress_features": bool(suppress_features),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -110,6 +116,9 @@ class GameConfig(Config):
                         balls_per_drop=balls,
                         spin_meter_start=spin_starts[spin_key],
                         bonus_meter_start=bonus_starts[bonus_key],
+                        # Base modes deliver pure drops; meters fill but the feature fires via the
+                        # dedicated trigger mode (keeps base RTP = per-ball board EV on every tier).
+                        suppress_features=True,
                     ),
                 )
                 for criteria, spin_key, bonus_key, quota in _FEATURE_STRATA

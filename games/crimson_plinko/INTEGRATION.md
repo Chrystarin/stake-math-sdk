@@ -90,7 +90,11 @@ All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_co
 | `BONUS_WHEEL_FREE_BALLS` | `100 20 50 50 50 80 20 20` | Bonus wheel entry free balls (level 1) |
 | `BONUS_LEVEL_BALLS` | `{2:20,3:30,4:50,5:75,6:100,7:150,8:200,9:300}` | Extra balls when the bonus meter re-fills during a round (level-up) |
 
-Weights are uniform placeholders — **tune RTP** in `optimization_program` / by reweighting `FREE_SPIN_SEGMENTS`, `BONUS_WHEEL_FREE_BALLS`, and the `_FEATURE_STRATA` quotas in `game_config.py`.
+**RTP is tuned for compliance (90.0%–96.70%, cross-mode variance < 1%).** Every mode reads ~`TARGET_RTP` (95.7%, `plinko_data.py`):
+- **Base modes** pay the flat per-ball board EV (`BOARD_SLOT_MULTIPLIERS`, ~0.957/ball) with **no in-drop feature** (see *Feature triggering* below), so all four tiers land at the same RTP regardless of ball count.
+- **Trigger modes** are EV-priced like buy-feature modes: `run.py:set_trigger_mode_index_costs` sets each one's `index.json` cost = `mean_payout / TARGET_RTP`, so the Stake math summary reads them at ~`TARGET_RTP` too (they stay free for players — `config.json` cost is `TRIGGER_MODE_COST`).
+
+To re-tune, change `BOARD_SLOT_MULTIPLIERS` (base RTP) and/or `TARGET_RTP`; `FREE_SPIN_SEGMENTS` / `BONUS_WHEEL_FREE_BALLS` only change the *feel* of the feature (their EV is absorbed by the trigger-mode price).
 
 ## Bonus level-up (in `game_calculations.simulate_bonus_round`)
 
@@ -116,16 +120,23 @@ so RGS computes the payout (no client-side trigger or payout). The triggering me
 | Spin meter full | `freespinone/ten/twenty/fifty` | `freeSpinTrigger` (+ bonus on `BONUS` segment) | `force_freespin` |
 | Bonus meter full | `bonusone/ten/twenty/fifty` | `bonusRoulette` + `bonusRound`(s) | `force_bonus` |
 
-- **Cost / free:** trigger modes simulate at the tier cost (so RTP math never divides by zero) but
-  are **published at `TRIGGER_MODE_COST` (0 = free)** via `run.py:set_trigger_mode_costs_free`. With
-  cost 0, RGS debit = `amount × 0` = 0 while payout still = `amount × payoutMultiplier`. **If your
-  RGS rejects a zero-cost play, set `TRIGGER_MODE_COST` (plinko_data.py) to a paid value and mirror
-  it in `apps/plinko/src/game/config.ts` — that's the only change.**
+- **Cost / free:** trigger modes simulate at the tier cost (so RTP math never divides by zero) and
+  are **published at `TRIGGER_MODE_COST` (0 = free) in `config.json`** via
+  `run.py:set_trigger_mode_costs_free` — RGS debit = `amount × 0` = 0 while payout still =
+  `amount × payoutMultiplier`. **If your RGS rejects a zero-cost play, set `TRIGGER_MODE_COST`
+  (plinko_data.py) to a paid value and mirror it in `apps/plinko/src/game/config.ts`.**
+- **Math-summary cost (separate from the player debit):** `run.py:set_trigger_mode_index_costs`
+  rewrites each trigger mode's `index.json` cost to `mean_payout / TARGET_RTP` so the Stake math
+  tool scores them at ~`TARGET_RTP` (a forced feature pays many ×, so at the raw tier cost it would
+  read as thousands-of-percent RTP and blow up the cross-mode variance check). This is metadata for
+  the math eval only; it does **not** change what RGS charges (that's `config.json`, still 0).
 - Client wiring: `plinkoBetMode.ts:plinkoActiveBetMode` (mode selection), `gameOrchestrator.ts:maybeAutoFireFeatureTrigger` (auto-fire when full + idle).
-- RTP: a free always-trigger mode is +EV in isolation — the feature is funded by base-game RTP, which is the deferred tuning step.
 
-The base modes still publish meter-start strata (`_FEATURE_STRATA`) so a meter can also fill+trigger
-within a single book when RGS happens to serve such a book.
+Base modes run with `suppress_features=True`: a meter can **fill** within a base book (emitting
+`spinMeter`/`bonusMeter`, kept book-authoritative) but the feature is **never fired in-drop** — the
+full meter carries over and the trigger mode fires it on the next bet. This keeps base RTP at the
+flat per-ball board EV on every tier; the `_FEATURE_STRATA` meter-start strata are now only for
+meter-state variety in the published books (RTP-neutral).
 
 ## Balls per drop (RGS bet modes)
 

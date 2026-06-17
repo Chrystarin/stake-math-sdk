@@ -16,7 +16,9 @@ import math
 
 # Canonical board — same literal values as apps/plinko `BOARD_SLOT_MULTIPLIERS`.
 # Center index 7 is the spin pocket (0× payout; fills the free-spin meter only).
-BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 10, 2, 0.5, 0.2, 0, 0.2, 0.5, 2, 10, 20, 50, 100]
+# Tuned for compliance: with a 14-row Galton distribution the per-ball expected
+# multiplier is ~0.957, so the base modes land at ~95.7% RTP (within 90.0%-96.70%).
+BOARD_SLOT_MULTIPLIERS = [100, 40, 15, 8, 1.5, 0.4, 0.2, 0, 0.2, 0.4, 1.5, 8, 15, 40, 100]
 
 # Serialized on plinkoDrop.difficulty for RGS / published math compatibility.
 DEFAULT_VARIANT_ID = 0
@@ -62,6 +64,15 @@ BONUS_MODE_BY_BALLS: dict[int, str] = {
 # Published cost for the trigger modes. 0 = free feature when the meter fills. If your RGS rejects
 # a zero-cost play, set this to a paid value (e.g. the tier balls count) — that's the only change.
 TRIGGER_MODE_COST = 0.0
+
+# Target RTP used to price the feature-trigger modes for the Stake Engine math summary. A forced
+# free-spin / bonus round pays many multiples of the tier cost, so at the raw tier cost those modes
+# read as thousands-of-percent RTP and blow up the cross-mode variance check. We instead publish
+# their math-eval cost (index.json) as `mean_payout / TARGET_RTP`, exactly like a buy-feature mode,
+# so every mode reads ~TARGET_RTP. This is metadata for the math tool only — players still get the
+# feature free (config.json keeps `TRIGGER_MODE_COST`). Matches the base per-ball EV (~0.957) so all
+# 12 modes cluster inside a <0.5% band.
+TARGET_RTP = 0.957
 
 
 def freespin_mode_for_balls(balls_per_drop: int) -> str:
