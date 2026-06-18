@@ -46,9 +46,15 @@ class GameState(GameStateOverride):
             spin_meter_max = scaled_spin_meter_max(balls_per_drop)
             bonus_meter_max = scaled_bonus_meter_max(balls_per_drop)
 
+            # The bonus trigger is a pure feature bet: skip its initial drop so the payout is exactly
+            # the triggering round's win (carried by the client) + the bonus free balls — no extra
+            # base drop. The plinkoDrop event still carries the tier `balls_per_drop` for the client's
+            # stratum check; only its outcomes are empty. (Free-spin trigger keeps its drop — that
+            # re-drop is what the wheel multiplies.)
+            initial_drop_balls = 0 if force_bonus else balls_per_drop
             outcomes, total_win = self.build_drop_outcomes(
                 row_count=row_count,
-                balls_per_drop=balls_per_drop,
+                balls_per_drop=initial_drop_balls,
                 stake_per_ball=stake_per_ball,
             )
             (

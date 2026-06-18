@@ -121,10 +121,13 @@ so RGS computes the payout (no client-side trigger or payout). The triggering me
 | Bonus meter full | `bonusone/ten/twenty/fifty` | `bonusRoulette` + `bonusRound`(s) | `force_bonus` |
 
 - **Cost / free:** trigger modes simulate at the tier cost (so RTP math never divides by zero) and
-  are **published at `TRIGGER_MODE_COST` (0 = free) in `config.json`** via
-  `run.py:set_trigger_mode_costs_free` — RGS debit = `amount × 0` = 0 while payout still =
-  `amount × payoutMultiplier`. **If your RGS rejects a zero-cost play, set `TRIGGER_MODE_COST`
-  (plinko_data.py) to a paid value and mirror it in `apps/plinko/src/game/config.ts`.**
+  are **published at `TRIGGER_MODE_COST` (0 = free) in BOTH `config.json` (RGS debit) and
+  `config_fe_*.json` (FE wager display)** — via `run.py:set_trigger_mode_costs_free` +
+  `write_plinko_fe_config`. The FE one matters: the client computes the balance debit as
+  `plinkoPlayAmount × betMode.cost`, so a non-zero FE trigger cost makes the client deduct the
+  balance for an auto-fired free feature (and flickers the win). RGS debit = `amount × 0` = 0 while
+  payout still = `amount × payoutMultiplier`. **If your RGS rejects a zero-cost play, set
+  `TRIGGER_MODE_COST` (plinko_data.py) to a paid value and mirror it in `apps/plinko/src/game/config.ts`.**
 - **Math-summary cost (separate from the player debit):** `run.py:set_trigger_mode_index_costs`
   rewrites each trigger mode's `index.json` cost to `mean_payout / TARGET_RTP` so the Stake math
   tool scores them at ~`TARGET_RTP` (a forced feature pays many ×, so at the raw tier cost it would

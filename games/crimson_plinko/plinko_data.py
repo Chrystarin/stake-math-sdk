@@ -46,8 +46,11 @@ def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
 
 # Dedicated feature-trigger modes (per balls-per-drop tier). The client switches to these when a
 # meter fills, so RGS reliably serves a book that triggers the feature (mode selection is honored,
-# unlike play `meta`). Published cost is `TRIGGER_MODE_COST` (0 = free); sims still run at the tier
-# cost so RTP math never divides by zero.
+# unlike play `meta`).
+#   FREESPIN modes: PAID at the real tier cost (a boosted spin = a normal paid spin; the zero-sum
+#     wheel multiplies its own drop win, so RTP == base).
+#   BONUS modes: FREE (`TRIGGER_MODE_COST`); a bonus round awards positive-EV free balls, EV-priced
+#     in index.json for the math summary (see run.py). Sims run at the tier cost (RTP never /0).
 FREESPIN_MODE_BY_BALLS: dict[int, str] = {
     1: "freespinone",
     10: "freespinten",
@@ -61,17 +64,19 @@ BONUS_MODE_BY_BALLS: dict[int, str] = {
     50: "bonusfifty",
 }
 
-# Published cost for the trigger modes. 0 = free feature when the meter fills. If your RGS rejects
-# a zero-cost play, set this to a paid value (e.g. the tier balls count) — that's the only change.
+# Published cost for the FREE (bonus) trigger modes. 0 = free bonus when the bonus meter fills. If
+# your RGS rejects a zero-cost play, set this to a paid value (e.g. the tier balls count). Freespin
+# modes ignore this — they are paid at the tier cost (set in game_config BetMode).
 TRIGGER_MODE_COST = 0.0
 
-# Target RTP used to price the feature-trigger modes for the Stake Engine math summary. A forced
-# free-spin / bonus round pays many multiples of the tier cost, so at the raw tier cost those modes
-# read as thousands-of-percent RTP and blow up the cross-mode variance check. We instead publish
-# their math-eval cost (index.json) as `mean_payout / TARGET_RTP`, exactly like a buy-feature mode,
-# so every mode reads ~TARGET_RTP. This is metadata for the math tool only — players still get the
-# feature free (config.json keeps `TRIGGER_MODE_COST`). Matches the base per-ball EV (~0.957) so all
-# 12 modes cluster inside a <0.5% band.
+# Target RTP for the Stake Engine math summary. A forced bonus round pays many multiples of the tier
+# cost, so at the raw tier cost the bonus modes read as thousands-of-percent RTP and blow up the
+# cross-mode variance check. We instead publish their math-eval cost (index.json) as
+# `mean_payout / TARGET_RTP`, exactly like a buy-feature mode, so they read ~TARGET_RTP. This is
+# metadata for the math tool only — the bonus stays free for players (config.json keeps
+# `TRIGGER_MODE_COST`). Base + freespin modes already read ~TARGET_RTP at their real tier cost (the
+# zero-sum free-spin wheel is RTP-neutral), matching the per-ball board EV (~0.957) so every mode
+# clusters inside a <0.5% band.
 TARGET_RTP = 0.957
 
 
@@ -85,6 +90,10 @@ def bonus_mode_for_balls(balls_per_drop: int) -> str:
 
 def all_trigger_mode_names() -> list[str]:
     return list(FREESPIN_MODE_BY_BALLS.values()) + list(BONUS_MODE_BY_BALLS.values())
+
+
+def all_bonus_mode_names() -> list[str]:
+    return list(BONUS_MODE_BY_BALLS.values())
 
 
 def row_tier_index(row_count: int) -> int:
@@ -119,8 +128,27 @@ METER_TIER_CONFIG: dict[int, dict[str, float]] = {
 # Per-ball chance to award a bonus-meter coin-peg hit (independent of the landing pocket).
 BONUS_PEG_HIT_PROB = 0.14
 
-# Free-spin wheel segments (label list; uniform weight placeholders — tune RTP later).
-FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X", "15X"]
+# Free-spin wheel segments (label list). ZERO-SUM: the multipliers average EXACTLY 1.0, so a free
+# spin multiplies the spin's own drop win (drop_win × M) with no net EV change — every freespin mode
+# therefore has the same RTP as the base board (~95.7%) on every tier, which is the only way a true
+# "round win × wheel" multiply stays inside Stake's cross-mode variance band. A low segment shrinks
+# the win, a high one grows it. The mean MUST stay 1.0 when retuning (sum == len). No BONUS segment:
+# the bonus feature has its own meter; mixing its positive-EV chain in here would break the mean.
+# Mirror this list in apps/plinko game-logic/constants.ts FREE_SPIN_SEGMENTS.
+FREE_SPIN_SEGMENTS: list[str] = ["0.2X", "0.3X", "0.5X", "0.5X", "1X", "1X", "1.5X", "3X"]
+
+
+def _free_spin_segments_mean() -> float:
+    vals = [float(s[:-1]) for s in FREE_SPIN_SEGMENTS if s.upper().endswith("X")]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+# Zero-sum invariant: a freespin mode pays drop_win × M, so its RTP = base_board_RTP × mean(M). The
+# mean MUST be 1.0 or freespin RTP diverges from the base tiers and fails the cross-mode variance
+# check (and the feature stops being a true neutral multiply). Fail fast if a retune breaks it.
+assert abs(_free_spin_segments_mean() - 1.0) < 1e-6, (
+    f"FREE_SPIN_SEGMENTS must average 1.0 (zero-sum); got {_free_spin_segments_mean():.6f}"
+)
 
 # Bonus wheel entry free-ball awards (uniform weight placeholders — tune RTP later).
 BONUS_WHEEL_FREE_BALLS: list[int] = [100, 20, 50, 50, 50, 80, 20, 20]
