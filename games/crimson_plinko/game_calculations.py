@@ -196,9 +196,10 @@ class GameCalculations(Executables):
         if force_freespin:
             segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
             multiplier = self._free_spin_segment_multiplier(segment)
-            # Zero-sum wheel: the free spin multiplies THIS spin's own drop win (drop_win × M).
-            # feature_win is the delta on top of the base drop already in total_win, so the settled
-            # total is exactly drop_win × M. mean(M) == 1, so the freespin mode's RTP == base RTP.
+            # Free spin multiplies THIS spin's own drop win (drop_win × M), M >= 1 so it never
+            # shrinks. feature_win is the delta on top of the base drop already in total_win, so the
+            # settled total is exactly drop_win × M. The mode is FREE + EV-priced (run.py), so this
+            # positive-EV payout still reads ~TARGET_RTP in the Stake summary.
             scaled_total = drop_win * multiplier
             feature_win += scaled_total - drop_win
             events.append(
