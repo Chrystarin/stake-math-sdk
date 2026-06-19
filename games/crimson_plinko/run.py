@@ -19,12 +19,12 @@ from plinko_data import (
     FREE_SPIN_SEGMENTS,
     METER_TIER_CONFIG,
     SPIN_METER_MAX,
+    SPIN_METER_TIER,
     TARGET_RTP,
     TRIGGER_MODE_COST,
     all_trigger_mode_names,
     bet_mode_for_balls_per_drop,
     bonus_mode_for_balls,
-    freespin_mode_for_balls,
 )
 from publish_verify import sync_all_publish_files
 
@@ -133,6 +133,13 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
         str(balls): {"startRatio": cfg["start_ratio"], "maxRatio": cfg["max_ratio"]}
         for balls, cfg in METER_TIER_CONFIG.items()
     }
+    # Per-drop free-spin meter (max + start) per balls-per-drop tier; the client uses this to reset
+    # the meter each round and to re-seed the meter UI when the tier is switched. 1-ball is absent
+    # (no free spin). Mirror in apps/plinko game-logic/constants.ts SPIN_METER_TIER.
+    fe["spinMeterTier"] = {
+        str(balls): {"max": int(cfg["max"]), "startRatio": cfg["start_ratio"]}
+        for balls, cfg in SPIN_METER_TIER.items()
+    }
     # Mirror the free feature-trigger-mode cost into the FE config. The client computes the balance
     # debit as `plinkoPlayAmount × betMode.cost`, so if a trigger cost is left at the tier value the
     # client debits the player for an auto-fired (free) feature (and flickers the win). Zero both the
@@ -169,9 +176,9 @@ if __name__ == "__main__":
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
     }
-    # Feature-trigger modes are forced (always trigger) and EV-priced, so fewer sims are needed.
+    # Bonus trigger modes are forced (always trigger) and EV-priced, so fewer sims are needed.
+    # (No freespin trigger mode — the free spin is in-drop within the base modes above.)
     for balls in BALLS_PER_DROP_OPTIONS:
-        num_sim_args[freespin_mode_for_balls(balls)] = max(500, sims_per_trigger // sims_div)
         num_sim_args[bonus_mode_for_balls(balls)] = max(500, sims_per_trigger // sims_div)
 
     # Set PLINKO_RUN_SIMS=0 to only rebuild configs/publish files from existing books + LUTs.

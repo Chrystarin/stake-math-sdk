@@ -29,12 +29,12 @@ class GameState(GameStateOverride):
         spin_meter_at_bet_start = max(0, int(conditions.get("spin_meter_start", 0)))
         bonus_meter_at_bet_start = max(0, int(conditions.get("bonus_meter_start", 0)))
         bonus_level_at_bet_start = max(0, int(conditions.get("bonus_level_start", 0)))
-        # Dedicated trigger modes set these so the feature fires unconditionally this bet.
-        force_freespin = bool(conditions.get("force_freespin", False))
+        # The dedicated BONUS trigger mode sets this so the bonus fires unconditionally this bet.
         force_bonus = bool(conditions.get("force_bonus", False))
-        # Base modes set this: meters fill (book-authoritative) but the feature is not fired
-        # in-drop — a full meter carries over and the trigger mode fires it on the next bet.
+        # Base modes set this so the bonus meter carries over (delivered by the bonus trigger mode).
         suppress_features = bool(conditions.get("suppress_features", False))
+        # FREE SPIN is per-drop + in-drop: enabled on the 10/20/50 tiers, off on 1-ball.
+        spin_in_drop = bool(conditions.get("spin_in_drop", False))
 
         self.repeat = True
         while self.repeat:
@@ -49,8 +49,8 @@ class GameState(GameStateOverride):
             # The bonus trigger is a pure feature bet: skip its initial drop so the payout is exactly
             # the triggering round's win (carried by the client) + the bonus free balls — no extra
             # base drop. The plinkoDrop event still carries the tier `balls_per_drop` for the client's
-            # stratum check; only its outcomes are empty. (Free-spin trigger keeps its drop — that
-            # re-drop is what the wheel multiplies.)
+            # stratum check; only its outcomes are empty. Base / free-spin rounds keep their real drop
+            # (the free spin fires in-drop on top of it).
             initial_drop_balls = 0 if force_bonus else balls_per_drop
             outcomes, total_win = self.build_drop_outcomes(
                 row_count=row_count,
@@ -72,9 +72,9 @@ class GameState(GameStateOverride):
                 bonus_level_start=bonus_level_at_bet_start,
                 spin_meter_max=spin_meter_max,
                 bonus_meter_max=bonus_meter_max,
-                force_freespin=force_freespin,
                 force_bonus=force_bonus,
                 suppress_features=suppress_features,
+                spin_in_drop=spin_in_drop,
             )
             total_win += feature_win
 

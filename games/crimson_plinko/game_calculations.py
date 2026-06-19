@@ -160,58 +160,37 @@ class GameCalculations(Executables):
         bonus_level_start: int = 0,
         spin_meter_max: int = SPIN_METER_MAX,
         bonus_meter_max: int = BONUS_METER_MAX,
-        force_freespin: bool = False,
         force_bonus: bool = False,
         suppress_features: bool = False,
+        spin_in_drop: bool = False,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
 
         Returns (events, feature_win, spin_meter, bonus_meter, bonus_level). `feature_win`
-        is the extra win on top of the base drop win, so settlement totals to the displayed
-        result: free-spin `NX` scales the whole base drop win; bonus rounds add their own
-        precomputed ball wins.
+        is the extra win on top of the base drop win, so the settled total is
+        `drop_win + feature_win`.
 
-        `force_freespin` / `force_bonus` are set by the dedicated trigger modes (selected by the
-        client when a meter is full): the feature fires unconditionally and the meter resets,
-        instead of walking per-ball meter hits.
+        FREE SPIN (per-drop, in-drop): the spin meter is seeded at `spin_meter_start` (a fixed
+        per-tier value, NOT carried across bets) and fills on each `hitSpinSlot`. When it reaches
+        `spin_meter_max` WITHIN this drop, the free spin fires ONCE, in-drop, on the same round.
+        The wheel multiplier applies to the BET PER BALL (a fixed base), so a numeric `M` adds
+        `stake_per_ball × M` and a `BONUS` segment chains into a bonus round. Gated by `spin_in_drop`
+        so the 1-ball tier (off) never fires — a single-hit trigger on a 1-ball bet can't be
+        RTP-compliant with this wheel.
 
-        `suppress_features` is set by the base bet modes: the meters still fill and emit
-        spin/bonusMeter events (so the client keeps an authoritative, book-driven meter), but the
-        feature is NOT fired in-drop. A full meter simply carries over and the client auto-fires the
-        dedicated trigger mode on the next bet — so base RTP is exactly the per-ball board EV across
-        every tier (no tier-dependent in-drop feature inflation), while the feature itself is still
-        delivered server-authoritatively via the trigger mode (payout-consistency invariant intact).
+        BONUS meter: unchanged — a SESSION meter delivered by the dedicated `bonus*` trigger mode.
+        `force_bonus` fires it unconditionally; base modes `suppress_features` so a full bonus meter
+        carries over and the trigger mode fires it next bet.
         """
         events: list[dict] = []
         feature_win = 0.0
         spin_meter = max(0, int(spin_meter_start))
         bonus_meter = max(0, int(bonus_meter_start))
         bonus_level = max(0, int(bonus_level_start))
-        drop_win = self._drop_win_from_outcomes(outcomes, stake_per_ball)
 
-        # Trigger modes fire unconditionally — checked before the empty-drop guard so the bonus
-        # trigger can run with an empty initial drop (its payout is just the bonus free balls, which
-        # the client shows as triggering-round win + bonus, with no extra base drop).
-        if force_freespin:
-            segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
-            multiplier = self._free_spin_segment_multiplier(segment)
-            # Free spin multiplies THIS spin's own drop win (drop_win × M), M >= 1 so it never
-            # shrinks. feature_win is the delta on top of the base drop already in total_win, so the
-            # settled total is exactly drop_win × M. The mode is FREE + EV-priced (run.py), so this
-            # positive-EV payout still reads ~TARGET_RTP in the Stake summary.
-            scaled_total = drop_win * multiplier
-            feature_win += scaled_total - drop_win
-            events.append(
-                {
-                    "type": "freeSpinTrigger",
-                    "segment": segment,
-                    "multiplier": multiplier,
-                    "amount": scaled_total,
-                }
-            )
-            return events, feature_win, 0, bonus_meter, bonus_level
-
+        # Bonus trigger mode: fire unconditionally (checked before the empty-drop guard so it can run
+        # with an empty initial drop — its payout is just the bonus free balls).
         if force_bonus:
             bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
                 row_count=row_count,
@@ -227,13 +206,14 @@ class GameCalculations(Executables):
         if not outcomes:
             return events, feature_win, spin_meter, bonus_meter, bonus_level
 
+        free_spin_fired = False
         for outcome in outcomes:
             if outcome.get("hitBonusPeg"):
                 bonus_meter = min(bonus_meter_max, bonus_meter + 1)
                 events.append(
                     {"type": "bonusMeter", "value": bonus_meter, "level": bonus_level}
                 )
-                # Base modes: keep the meter full (carry over) and let the trigger mode fire it.
+                # Bonus stays a session-meter feature (trigger mode); base modes carry it over.
                 if bonus_meter >= bonus_meter_max and not suppress_features:
                     bonus_meter = 0
                     bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
@@ -250,23 +230,36 @@ class GameCalculations(Executables):
                 events.append(
                     {"type": "spinMeter", "value": spin_meter, "max": spin_meter_max}
                 )
-                # Base modes: keep the meter full (carry over) and let the trigger mode fire it.
-                # (Non-suppressed in-drop firing is intentionally variance-prone — it multiplies the
-                # whole drop — so production base modes always suppress; the freespin trigger mode
-                # carries the zero-sum multiply. Kept here for parity, using the same drop_win × M.)
-                if spin_meter >= spin_meter_max and not suppress_features:
-                    spin_meter = 0
+                # Per-drop free spin: fires ONCE in-drop the moment the meter fills this round.
+                if spin_in_drop and not free_spin_fired and spin_meter >= spin_meter_max:
+                    free_spin_fired = True
                     segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
                     multiplier = self._free_spin_segment_multiplier(segment)
-                    scaled_total = drop_win * multiplier
-                    feature_win += scaled_total - drop_win
-                    events.append(
-                        {
-                            "type": "freeSpinTrigger",
-                            "segment": segment,
-                            "multiplier": multiplier,
-                            "amount": scaled_total,
-                        }
-                    )
+                    if segment == "BONUS":
+                        # BONUS segment chains directly into a bonus round.
+                        events.append(
+                            {"type": "freeSpinTrigger", "segment": segment, "multiplier": 0.0, "amount": 0.0}
+                        )
+                        bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
+                            row_count=row_count,
+                            stake_per_ball=stake_per_ball,
+                            bonus_meter_max=bonus_meter_max,
+                            level_start=bonus_level,
+                        )
+                        events.extend(bonus_events)
+                        feature_win += bonus_win
+                    else:
+                        # Multiplier applies to the BET PER BALL (fixed base) — payout = stake × M,
+                        # added on top of the drop win (NOT a multiply of the round's drop).
+                        free_spin_win = stake_per_ball * multiplier
+                        feature_win += free_spin_win
+                        events.append(
+                            {
+                                "type": "freeSpinTrigger",
+                                "segment": segment,
+                                "multiplier": multiplier,
+                                "amount": free_spin_win,
+                            }
+                        )
 
         return events, feature_win, spin_meter, bonus_meter, bonus_level

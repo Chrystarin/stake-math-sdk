@@ -107,10 +107,11 @@ def find_feature_payout_mismatches(books_json: str, *, wincap: float = 1000.0) -
             if event["type"] == "bonusRound":
                 recon += _nonspin_win(event["outcomes"])
             elif event["type"] == "freeSpinTrigger":
-                # Zero-sum wheel: the free spin replaces the drop win with drop_win × M (M may be
-                # below 1, even 0), so the delta on top of round_drop is round_drop × (M − 1).
+                # In-drop free spin: the multiplier applies to the BET PER BALL, so it adds
+                # play_amount × M on top of the drop. A BONUS segment carries multiplier 0 here —
+                # its win comes from the bonusRound events handled above.
                 mult = float(event.get("multiplier", 0) or 0)
-                recon += round_drop * (mult - 1)
+                recon += play_amount * mult
         expected = round(min(recon / play_amount, wincap) * 100)
         if abs(int(final["amount"]) - expected) > 1:
             mismatches.append((book.get("id"), int(final["amount"]), expected))

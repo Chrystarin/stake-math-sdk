@@ -13,27 +13,23 @@ from plinko_data import (
     bet_mode_for_balls_per_drop,
     bonus_meter_strata_starts,
     bonus_mode_for_balls,
-    freespin_mode_for_balls,
-    spin_meter_strata_starts,
+    scaled_spin_meter_start,
+    spin_in_drop_for_balls,
 )
 
 # Math package folder (make run GAME=crimson_plinko); RGS gameID is one_eyed_willys_plinko.
 PACKAGE_DIR = "crimson_plinko"
 
-# Meter-state strata within each balls-per-drop tier. `spin`/`bonus` are the meter-start values
-# the stratum carries, so published base books span the range of carried meter states for the
-# client to render. Quotas must sum to 1.0 per tier. Base modes run with `suppress_features`, so
-# these strata are RTP-neutral (they never fire a feature in-drop — a full meter just carries over
-# and the trigger mode fires it next bet); their only purpose is meter-state variety in the books.
+# BONUS-meter-state strata within each balls-per-drop tier. The bonus meter is a SESSION meter, so
+# published base books span the range of carried bonus-meter states (the client picks/renders by its
+# running meter). The SPIN meter is now per-drop (fixed per-tier start, fires in-drop), so it needs
+# no strata variety. Quotas must sum to 1.0 per tier.
 _FEATURE_STRATA = (
-    # (criteria, spin_start_key, bonus_start_key, quota)
-    ("basegame", "zero", "zero", 0.90),
-    ("spin_meter_mid", "mid", "zero", 0.02),
-    ("spin_meter_high", "high", "zero", 0.02),
-    ("spin_meter_full", "full", "zero", 0.02),
-    ("bonus_meter_mid", "zero", "mid", 0.005),
-    ("bonus_meter_high", "zero", "high", 0.005),
-    ("bonus_meter_full", "zero", "full", 0.03),
+    # (criteria, bonus_start_key, quota)
+    ("basegame", "zero", 0.92),
+    ("bonus_meter_mid", "mid", 0.02),
+    ("bonus_meter_high", "high", 0.02),
+    ("bonus_meter_full", "full", 0.04),
 )
 
 
@@ -77,9 +73,9 @@ class GameConfig(Config):
             spin_meter_start: int = 0,
             bonus_meter_start: int = 0,
             bonus_level_start: int = 0,
-            force_freespin: bool = False,
             force_bonus: bool = False,
             suppress_features: bool = False,
+            spin_in_drop: bool = False,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -89,9 +85,9 @@ class GameConfig(Config):
                 "spin_meter_start": int(spin_meter_start),
                 "bonus_meter_start": int(bonus_meter_start),
                 "bonus_level_start": int(bonus_level_start),
-                "force_freespin": bool(force_freespin),
                 "force_bonus": bool(force_bonus),
                 "suppress_features": bool(suppress_features),
+                "spin_in_drop": bool(spin_in_drop),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -103,10 +99,11 @@ class GameConfig(Config):
         self.bet_modes = []
         for balls in BALLS_PER_DROP_OPTIONS:
             mode_name = bet_mode_for_balls_per_drop(balls)
-            spin_mid, spin_high, spin_full = spin_meter_strata_starts(balls)
             bonus_mid, bonus_high, bonus_full = bonus_meter_strata_starts(balls)
-            spin_starts = {"zero": 0, "mid": spin_mid, "high": spin_high, "full": spin_full}
             bonus_starts = {"zero": 0, "mid": bonus_mid, "high": bonus_high, "full": bonus_full}
+            # Spin meter is per-drop: same fixed start every book; in-drop free spin on 10/20/50.
+            spin_start = scaled_spin_meter_start(balls)
+            spin_in_drop = spin_in_drop_for_balls(balls)
 
             distributions = [
                 Distribution(
@@ -114,14 +111,15 @@ class GameConfig(Config):
                     quota=quota,
                     conditions=plinko_conditions(
                         balls_per_drop=balls,
-                        spin_meter_start=spin_starts[spin_key],
+                        spin_meter_start=spin_start,
                         bonus_meter_start=bonus_starts[bonus_key],
-                        # Base modes deliver pure drops; meters fill but the feature fires via the
-                        # dedicated trigger mode (keeps base RTP = per-ball board EV on every tier).
+                        # Free spin fires IN-DROP (spin_in_drop) on 10/20/50; the BONUS meter is
+                        # suppressed in-drop (carries over, fired by the dedicated bonus trigger mode).
                         suppress_features=True,
+                        spin_in_drop=spin_in_drop,
                     ),
                 )
-                for criteria, spin_key, bonus_key, quota in _FEATURE_STRATA
+                for criteria, bonus_key, quota in _FEATURE_STRATA
             ]
 
             self.bet_modes.append(
@@ -138,29 +136,10 @@ class GameConfig(Config):
                 ),
             )
 
-            # Dedicated feature-trigger modes (client switches to these when a meter fills).
+            # Dedicated BONUS trigger mode (client auto-fires it when the bonus meter fills).
             # Cost stays at the tier value for sims (RTP math divides by it); run.py republishes
-            # config.json with the free `TRIGGER_MODE_COST`.
-            self.bet_modes.append(
-                BetMode(
-                    name=freespin_mode_for_balls(balls),
-                    cost=float(balls),
-                    rtp=self.rtp,
-                    max_win=self.wincap,
-                    auto_close_disabled=False,
-                    is_feature=True,
-                    is_buybonus=False,
-                    distributions=[
-                        Distribution(
-                            criteria=f"freespin_balls_{balls}",
-                            quota=1.0,
-                            conditions=plinko_conditions(
-                                balls_per_drop=balls, force_freespin=True
-                            ),
-                        ),
-                    ],
-                ),
-            )
+            # config.json with the free `TRIGGER_MODE_COST`. (No freespin trigger mode — the free
+            # spin is now in-drop in the base modes.)
             self.bet_modes.append(
                 BetMode(
                     name=bonus_mode_for_balls(balls),

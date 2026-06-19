@@ -44,17 +44,11 @@ def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
     return BET_MODE_BY_BALLS_PER_DROP.get(balls, "baseten")
 
 
-# Dedicated feature-trigger modes (per balls-per-drop tier). The client auto-fires one of these when
-# a meter fills, so RGS reliably serves a book that triggers the feature (mode selection is honored,
-# unlike play `meta`). Both FREESPIN and BONUS modes are FREE (`TRIGGER_MODE_COST`) positive-EV
-# features — the free spin pays drop_win × (>=1 wheel), the bonus awards free balls — and both are
-# EV-priced in index.json for the math summary (see run.py). Sims run at the tier cost (RTP never /0).
-FREESPIN_MODE_BY_BALLS: dict[int, str] = {
-    1: "freespinone",
-    10: "freespinten",
-    20: "freespintwenty",
-    50: "freespinfifty",
-}
+# Dedicated BONUS trigger modes (per balls-per-drop tier). The client auto-fires one when the bonus
+# meter fills, so RGS reliably serves a book that triggers the bonus (mode selection is honored,
+# unlike play `meta`). FREE (`TRIGGER_MODE_COST`) positive-EV feature, EV-priced in index.json for
+# the math summary (see run.py). Sims run at the tier cost (RTP never /0). NOTE: there is NO freespin
+# trigger mode — the free spin fires IN-DROP within the base modes (per-drop spin meter).
 BONUS_MODE_BY_BALLS: dict[int, str] = {
     1: "bonusone",
     10: "bonusten",
@@ -62,23 +56,18 @@ BONUS_MODE_BY_BALLS: dict[int, str] = {
     50: "bonusfifty",
 }
 
-# Published cost for the FREE feature-trigger modes (freespin + bonus). 0 = free feature when the
-# meter fills. If your RGS rejects a zero-cost play, set this to a paid value (e.g. the tier balls
-# count) — that's the only change.
+# Published cost for the FREE bonus trigger modes. 0 = free bonus when the meter fills. If your RGS
+# rejects a zero-cost play, set this to a paid value (e.g. the tier balls count).
 TRIGGER_MODE_COST = 0.0
 
-# Target RTP for the Stake Engine math summary. A forced free-spin / bonus round pays many multiples
-# of the tier cost, so at the raw tier cost those modes read as thousands-of-percent RTP and blow up
-# the cross-mode variance check. We instead publish their math-eval cost (index.json) as
-# `mean_payout / TARGET_RTP`, exactly like a buy-feature mode, so they read ~TARGET_RTP. This is
-# metadata for the math tool only — the features stay free for players (config.json keeps
-# `TRIGGER_MODE_COST`). Base modes read ~TARGET_RTP at their real tier cost (per-ball board EV
-# ~0.957), so every mode clusters inside a <1% band.
+# Target RTP for the Stake Engine math summary. A forced bonus round pays many multiples of the tier
+# cost, so at the raw tier cost the bonus modes read as thousands-of-percent RTP and blow up the
+# cross-mode variance check. We instead publish their math-eval cost (index.json) as
+# `mean_payout / TARGET_RTP`, exactly like a buy-feature mode, so they read ~TARGET_RTP. Metadata for
+# the math tool only — the bonus stays free for players (config.json keeps `TRIGGER_MODE_COST`). Base
+# modes read ~TARGET_RTP at their real tier cost (board EV ~0.957 + the rare in-drop free spin), so
+# every mode clusters inside a <1% band.
 TARGET_RTP = 0.957
-
-
-def freespin_mode_for_balls(balls_per_drop: int) -> str:
-    return FREESPIN_MODE_BY_BALLS.get(int(balls_per_drop), "freespinten")
 
 
 def bonus_mode_for_balls(balls_per_drop: int) -> str:
@@ -86,7 +75,7 @@ def bonus_mode_for_balls(balls_per_drop: int) -> str:
 
 
 def all_trigger_mode_names() -> list[str]:
-    return list(FREESPIN_MODE_BY_BALLS.values()) + list(BONUS_MODE_BY_BALLS.values())
+    return list(BONUS_MODE_BY_BALLS.values())
 
 
 def row_tier_index(row_count: int) -> int:
@@ -110,7 +99,8 @@ def spin_slot_index(num_slots: int) -> int:
 SPIN_METER_MAX = 10
 BONUS_METER_MAX = 20
 
-# Balls-per-drop tier scaling for meter maxima (apps/plinko METER_TIER_CONFIG).
+# Balls-per-drop tier scaling for the BONUS meter maxima (session meter; apps/plinko
+# METER_TIER_CONFIG). The spin meter uses SPIN_METER_TIER below instead.
 METER_TIER_CONFIG: dict[int, dict[str, float]] = {
     1: {"start_ratio": 0.0, "max_ratio": 1.0},
     10: {"start_ratio": 0.0, "max_ratio": 1.0},
@@ -118,29 +108,28 @@ METER_TIER_CONFIG: dict[int, dict[str, float]] = {
     50: {"start_ratio": 0.0, "max_ratio": 1.0},
 }
 
+# Per-drop FREE-SPIN meter, per balls-per-drop tier. The meter resets every round to
+# `start_ratio × max` (NO cross-bet carry) and fires the free spin IN-DROP when it reaches `max`
+# within the round. `max` scales UP with ball count so the fire rate stays rare enough that the
+# in-drop free spin (which pays bet × wheel, mean ~12.5× a ball's stake incl. the BONUS chain)
+# keeps every tier's RTP add < ~0.9% (cross-mode spread < 1%). Higher tiers start partially filled
+# (1/8, 1/4). The 1-ball tier is OMITTED — it has no free spin (a single-hit trigger on a 1-ball
+# bet can't be made compliant with this wheel). Tune `max` via `run.py` report_mode_rtp.
+SPIN_METER_TIER: dict[int, dict[str, float]] = {
+    10: {"max": 6, "start_ratio": 0.0},
+    20: {"max": 10, "start_ratio": 0.125},
+    50: {"max": 21, "start_ratio": 0.25},
+}
+
 # Per-ball chance to award a bonus-meter coin-peg hit (independent of the landing pocket).
 BONUS_PEG_HIT_PROB = 0.14
 
-# Free-spin wheel segments (label list). EVERY multiplier is >= 1X so the free spin can only GROW
-# the win it landed on, never shrink it. The free spin pays drop_win × M (positive EV), so it is a
-# FREE feature delivered by the freespin trigger modes and EV-priced in index.json (buy-feature
-# pricing, exactly like the bonus modes — see run.py) so the Stake math summary still reads
-# ~TARGET_RTP per mode. No BONUS segment (the bonus has its own meter). Mirror this list in
-# apps/plinko game-logic/constants.ts FREE_SPIN_SEGMENTS.
-FREE_SPIN_SEGMENTS: list[str] = ["1X", "2X", "1.5X", "3X", "2X", "5X", "1.5X", "10X"]
-
-
-def _free_spin_min_multiplier() -> float:
-    vals = [float(s[:-1]) for s in FREE_SPIN_SEGMENTS if s.upper().endswith("X")]
-    return min(vals) if vals else 0.0
-
-
-# Never-decrease invariant: the free spin must not reduce the win it landed on, so every wheel
-# multiplier must be >= 1X. (Compliance comes from EV-pricing the FREE freespin modes, not from a
-# zero-sum mean — so the values themselves are free to be all >= 1.) Fail fast if a retune breaks it.
-assert _free_spin_min_multiplier() >= 1.0, (
-    f"FREE_SPIN_SEGMENTS must never decrease the win — every multiplier >= 1X; got {FREE_SPIN_SEGMENTS}"
-)
+# Free-spin wheel segments (label list) — the original wheel's values with NO BONUS (the old BONUS
+# slot repeats 2X). Rendered on the label-less `free-spin-roulette-wheel-empty.png` with a
+# data-driven text overlay (FreeSpinRoulette.svelte). The free spin fires IN-DROP (per-drop meter)
+# and the multiplier applies to the BET PER BALL (fixed base): `M` pays `stake_per_ball × M` on top
+# of the drop. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_SEGMENTS.
+FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "2X", "20X", "15X"]
 
 # Bonus wheel entry free-ball awards (uniform weight placeholders — tune RTP later).
 BONUS_WHEEL_FREE_BALLS: list[int] = [100, 20, 50, 50, 50, 80, 20, 20]
@@ -178,23 +167,26 @@ def _js_round(value: float) -> int:
     return int(math.floor(value + 0.5))
 
 
+def spin_in_drop_for_balls(balls_per_drop: int) -> bool:
+    """True for tiers that fire the free spin in-drop (10/20/50); False for 1-ball (no free spin)."""
+    return int(balls_per_drop) in SPIN_METER_TIER
+
+
 def scaled_spin_meter_max(balls_per_drop: int) -> int:
-    cfg = meter_tier_config(balls_per_drop)
-    return max(1, _js_round(SPIN_METER_MAX * cfg["max_ratio"]))
+    """Per-drop free-spin meter max for this tier (1 if the tier has no free spin)."""
+    cfg = SPIN_METER_TIER.get(int(balls_per_drop))
+    return max(1, int(cfg["max"])) if cfg else 1
+
+
+def scaled_spin_meter_start(balls_per_drop: int) -> int:
+    """Per-drop free-spin meter reset value for this tier (start_ratio × max)."""
+    cfg = SPIN_METER_TIER.get(int(balls_per_drop))
+    return _js_round(cfg["max"] * cfg["start_ratio"]) if cfg else 0
 
 
 def scaled_bonus_meter_max(balls_per_drop: int) -> int:
     cfg = meter_tier_config(balls_per_drop)
     return max(1, _js_round(BONUS_METER_MAX * cfg["max_ratio"]))
-
-
-def spin_meter_strata_starts(balls_per_drop: int) -> tuple[int, int, int]:
-    """Mid / high / near-full spin_meter_start values for distribution strata."""
-    max_spin = scaled_spin_meter_max(balls_per_drop)
-    mid = max(max_spin // 2, 1)
-    near_full = max(max_spin - 1, 1)
-    high = max(near_full - 1, 0)
-    return mid, high, near_full
 
 
 def bonus_meter_strata_starts(balls_per_drop: int) -> tuple[int, int, int]:
