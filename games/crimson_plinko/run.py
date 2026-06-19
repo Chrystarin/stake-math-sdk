@@ -14,37 +14,16 @@ from plinko_data import (
     BONUS_LEVEL_BALLS,
     BONUS_METER_MAX,
     BONUS_PEG_HIT_PROB,
-    BONUS_WHEEL_FREE_BALLS,
+    BONUS_WHEEL_RELATIVE,
     COEFFICIENT_SETS,
     FREE_SPIN_SEGMENTS,
     METER_TIER_CONFIG,
     SPIN_METER_MAX,
     SPIN_METER_TIER,
-    TARGET_RTP,
-    TRIGGER_MODE_COST,
-    all_trigger_mode_names,
     bet_mode_for_balls_per_drop,
     bonus_mode_for_balls,
 )
 from publish_verify import sync_all_publish_files
-
-
-def set_trigger_mode_costs_free(gamestate: GameState) -> None:
-    """Republish config.json with the feature-trigger modes (freespin + bonus) at `TRIGGER_MODE_COST`.
-
-    Both are FREE positive-EV features (free spin pays drop_win × >=1 wheel; bonus awards free balls),
-    so the meter-fill costs the player nothing. Sims run at the tier cost (so RTP math never divides
-    by zero); the published cost here is what RGS uses for the debit (0 = free).
-    """
-    path = os.path.join(gamestate.output_files.config_path, "config.json")
-    with open(path, encoding="UTF-8") as f:
-        config = json.load(f)
-    trigger_modes = set(all_trigger_mode_names())
-    for shelf in config.get("bookShelfConfig", []):
-        if shelf.get("name") in trigger_modes:
-            shelf["cost"] = TRIGGER_MODE_COST
-    with open(path, "w", encoding="UTF-8") as f:
-        json.dump(config, f, indent=4)
 
 
 def _lut_mean_multiplier(lut_path: str) -> float:
@@ -64,7 +43,12 @@ def _lut_mean_multiplier(lut_path: str) -> float:
 
 
 def report_mode_rtp(gamestate: GameState) -> None:
-    """Print per-mode RTP (mean payout / index.json cost) — the value the Stake math summary shows."""
+    """Print per-mode RTP (mean payout / index.json cost) — the value the Stake math summary shows.
+
+    FREE feature modes (index cost 0 — the auto-fired bonus) are listed but EXCLUDED from the
+    cross-mode spread: they are free rounds (no player debit), not priced bets, so `payout / 0` is
+    not a meaningful RTP to band-check against the paid base modes.
+    """
     manifest_path = gamestate.output_files.configs["paths"]["manifest"]
     with open(manifest_path, encoding="UTF-8") as f:
         manifest = json.load(f)
@@ -73,38 +57,16 @@ def report_mode_rtp(gamestate: GameState) -> None:
     for mode in manifest.get("modes", []):
         lut = os.path.join(gamestate.output_files.publish_path, mode["weights"])
         mean_mult = _lut_mean_multiplier(lut)
-        cost = float(mode["cost"]) or 1.0
+        cost = float(mode["cost"])
+        if cost <= 0:
+            print(f"  {mode['name']:16} mean_mult={mean_mult:10.4f}  cost={cost:10.4f}  RTP=   FREE (excluded)")
+            continue
         rtp = mean_mult / cost
         rtps.append(rtp)
         print(f"  {mode['name']:16} mean_mult={mean_mult:10.4f}  cost={cost:10.4f}  RTP={rtp*100:7.2f}%")
     if rtps:
         spread = (max(rtps) - min(rtps)) * 100
-        print(f"  cross-mode spread (max-min) = {spread:.3f}%  [target < 1.00%]")
-
-
-def set_trigger_mode_index_costs(gamestate: GameState, target_rtp: float = TARGET_RTP) -> None:
-    """Price the FREE feature-trigger modes (freespin + bonus) in index.json so the math summary
-    reads ~`target_rtp`.
-
-    A forced free-spin / bonus round pays many multiples of the tier cost, so at the raw tier cost
-    those modes read as thousands-of-percent RTP and fail the cross-mode variance check. They behave
-    like buy-feature modes, so we publish their math-eval cost as `mean_payout / target_rtp` (the
-    fair buy price for `target_rtp` RTP). This only touches index.json (the file the Stake math tool
-    reads); config.json keeps `TRIGGER_MODE_COST` so the features stay free for players. Base-mode
-    costs (real ball count) are left untouched.
-    """
-    manifest_path = gamestate.output_files.configs["paths"]["manifest"]
-    with open(manifest_path, encoding="UTF-8") as f:
-        manifest = json.load(f)
-    trigger_modes = set(all_trigger_mode_names())
-    for mode in manifest.get("modes", []):
-        if mode["name"] not in trigger_modes:
-            continue
-        lut = os.path.join(gamestate.output_files.publish_path, mode["weights"])
-        mean_mult = _lut_mean_multiplier(lut)
-        mode["cost"] = round(mean_mult / target_rtp, 4) if target_rtp > 0 else mean_mult
-    with open(manifest_path, "w", encoding="UTF-8") as f:
-        json.dump(manifest, f, indent=4)
+        print(f"  cross-mode spread (max-min, paid modes) = {spread:.3f}%  [target < 1.00%]")
 
 
 def write_plinko_fe_config(gamestate: GameState) -> None:
@@ -126,7 +88,9 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     fe["bonusMeterMax"] = BONUS_METER_MAX
     fe["bonusPegHitProb"] = BONUS_PEG_HIT_PROB
     fe["freeSpinSegments"] = list(FREE_SPIN_SEGMENTS)
-    fe["bonusWheelFreeBalls"] = list(BONUS_WHEEL_FREE_BALLS)
+    # Bonus wheel RELATIVE multipliers (avg ≈ 1). The client renders per-tier values = round(m × tier
+    # balls) on the data-driven `bonus-roulette-wheel-empty.png` (mirror in constants.ts).
+    fe["bonusWheelRelative"] = list(BONUS_WHEEL_RELATIVE)
     # Level-up table keyed by level string (JSON object) for the client to mirror.
     fe["bonusLevelBalls"] = {str(level): balls for level, balls in BONUS_LEVEL_BALLS.items()}
     fe["meterTierConfig"] = {
@@ -140,14 +104,8 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
         str(balls): {"max": int(cfg["max"]), "startRatio": cfg["start_ratio"]}
         for balls, cfg in SPIN_METER_TIER.items()
     }
-    # Mirror the free feature-trigger-mode cost into the FE config. The client computes the balance
-    # debit as `plinkoPlayAmount × betMode.cost`, so if a trigger cost is left at the tier value the
-    # client debits the player for an auto-fired (free) feature (and flickers the win). Zero both the
-    # freespin and bonus modes to match config.json / RGS.
-    trigger_modes = set(all_trigger_mode_names())
-    for mode_name, mode_cfg in fe.get("betModes", {}).items():
-        if mode_name in trigger_modes and isinstance(mode_cfg, dict):
-            mode_cfg["cost"] = TRIGGER_MODE_COST
+    # No separate bonus mode anymore — the bonus is folded into the base modes (fires in-drop), so there
+    # are no free-trigger costs to zero here. Only the 4 base modes are published (each cost = ball count).
     with open(path, "w", encoding="UTF-8") as f:
         json.dump(fe, f, indent=4)
 
@@ -160,26 +118,18 @@ if __name__ == "__main__":
     compression = os.getenv("PLINKO_BOOKS_COMPRESSION", "0").lower() in {"1", "true", "yes"}
     profiling = False
 
-    # Base modes pay the per-ball board EV with no in-drop features (suppressed), so the RTP
-    # estimate's accuracy is set by the heavy 100x corner pocket (p≈6e-5). Low tiers need many
-    # sims to converge: the published RTP is mean(payouts) (uniform weights), so the band/variance
-    # checks only pass once the rare top pockets are well sampled. Counts scale ~per ball-sample.
-    # Feature-trigger modes (freespin + bonus) are forced + EV-priced (RTP is exactly TARGET_RTP
-    # regardless of N), so a small run is fine.
+    # Base mode RTP = board EV (+ the rare in-drop free spin). Convergence is set by the heavy 100x corner
+    # pocket (p≈6e-5), so low tiers need many sims (mean over uniform weights); bump them (or use
+    # PLINKO_BOOKS_COMPRESSION=1) if the ±0.5% band/spread is noisy on the low tiers.
     sims_div = max(1, int(os.getenv("PLINKO_SIM_DIV", "1")))  # set >1 for a fast smoke test
-    # Tuned so the base RTP estimate converges (heavy 100x corner pocket) while keeping the
-    # uncompressed book files memory-safe for the default `make run`. Bump via PLINKO_SIM_DIV<1?
-    # No — raise these directly with PLINKO_BOOKS_COMPRESSION=1 if you want tighter low-tier RTP.
-    base_sims = {1: 400_000, 10: 150_000, 20: 80_000, 50: 40_000}
-    sims_per_trigger = 2_000
+    base_sims = {1: 400_000, 10: 200_000, 20: 120_000, 50: 80_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
     }
-    # Bonus trigger modes are forced (always trigger) and EV-priced, so fewer sims are needed.
-    # (No freespin trigger mode — the free spin is in-drop within the base modes above.)
+    # Bonus modes are forced + SIZED (avg free balls ≈ tier, low variance), so they converge fast.
     for balls in BALLS_PER_DROP_OPTIONS:
-        num_sim_args[bonus_mode_for_balls(balls)] = max(500, sims_per_trigger // sims_div)
+        num_sim_args[bonus_mode_for_balls(balls)] = max(1000, 20_000 // sims_div)
 
     # Set PLINKO_RUN_SIMS=0 to only rebuild configs/publish files from existing books + LUTs.
     run_conditions = {"run_sims": os.getenv("PLINKO_RUN_SIMS", "1").lower() not in {"0", "false", "no"}}
@@ -199,9 +149,6 @@ if __name__ == "__main__":
         )
     sync_all_publish_files(gamestate)
     generate_configs(gamestate)
-    set_trigger_mode_costs_free(gamestate)
-    # Price the (free) feature-trigger modes for the math summary so all modes read ~TARGET_RTP.
-    set_trigger_mode_index_costs(gamestate)
     write_plinko_fe_config(gamestate)
     report_mode_rtp(gamestate)
     print(f"Done. Books: {gamestate.output_files.book_path}")

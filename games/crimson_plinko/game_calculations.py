@@ -9,11 +9,9 @@ import random as py_random
 from plinko_data import (
     BONUS_METER_MAX,
     BONUS_PEG_HIT_PROB,
-    BONUS_WHEEL_FREE_BALLS,
     FREE_SPIN_SEGMENTS,
-    MAX_BONUS_LEVEL,
     SPIN_METER_MAX,
-    bonus_level_balls,
+    bonus_wheel_free_balls,
     coefficients_for,
     spin_slot_index,
 )
@@ -24,7 +22,6 @@ class GameCalculations(Executables):
     """Galton-board style slot sampling for crimson plinko."""
 
     FREE_SPIN_SEGMENTS: list[str] = list(FREE_SPIN_SEGMENTS)
-    BONUS_WHEEL_FREE_BALLS: list[int] = list(BONUS_WHEEL_FREE_BALLS)
 
     def sample_rate_index(self, row_count: int, num_slots: int) -> int:
         """Map `row_count` binary peg deflections to a slot index."""
@@ -83,64 +80,37 @@ class GameCalculations(Executables):
         *,
         row_count: int,
         stake_per_ball: float,
-        bonus_meter_max: int,
-        level_start: int,
+        balls_per_drop: int,
     ) -> tuple[list[dict], float, int]:
         """
-        Simulate a full bonus round, including nested level-ups, server-side.
+        Simulate a SINGLE-LEVEL bonus round (Option #1 — normal-bet-cost bonus).
 
-        Entry balls come from the bonus wheel; while playing a level's balls, every
-        `hitBonusPeg` advances the in-round bonus meter, and each re-fill levels up and
-        grants `bonus_level_balls(level)` more balls (up to `MAX_BONUS_LEVEL`). One
-        `bonusRound` event is emitted per level so the client can animate a level-up
-        between them. Returns (events, feature_win, final_level).
+        The bonus wheel awards free balls SIZED to the tier (`bonus_wheel_free_balls(balls_per_drop)`,
+        avg ≈ balls), those balls drop, and that's the whole bonus — so the bonus mode (cost = tier cost)
+        averages ≈ `cost × board_EV` ≈ TARGET_RTP and stays compliant + deducts only one normal bet.
+        Returns (events, feature_win, level). NOTE (Option #1 trade-off): the big-jackpot extras — nested
+        level-ups and the in-bonus free spin — are intentionally REMOVED; they can't fit a normal-cost
+        bonus without operator loss.
         """
         events: list[dict] = []
-        feature_win = 0.0
-
-        free_balls = int(py_random.choice(self.BONUS_WHEEL_FREE_BALLS))
+        free_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": free_balls})
 
-        level = int(level_start) + 1
-        # Queue of (level, balls_to_play); index walk lets later level-ups append more.
-        queue: list[tuple[int, int]] = [(level, free_balls)]
-        bonus_meter = 0
-        i = 0
-        while i < len(queue):
-            level_for_balls, balls = queue[i]
-            i += 1
-            if balls <= 0:
-                continue
-            outcomes, drop_win = self.build_drop_outcomes(
-                row_count=row_count,
-                balls_per_drop=balls,
-                stake_per_ball=stake_per_ball,
-            )
-            feature_win += drop_win
-            events.append(
-                {
-                    "type": "bonusRound",
-                    "freeBalls": balls,
-                    "outcomes": outcomes,
-                    "level": int(level_for_balls),
-                    "ballsPlayed": 0,
-                }
-            )
-            if level >= MAX_BONUS_LEVEL:
-                continue
-            for outcome in outcomes:
-                if not outcome.get("hitBonusPeg"):
-                    continue
-                bonus_meter += 1
-                if bonus_meter < bonus_meter_max:
-                    continue
-                bonus_meter = 0
-                level += 1
-                queue.append((level, bonus_level_balls(level)))
-                if level >= MAX_BONUS_LEVEL:
-                    break
-
-        return events, feature_win, level
+        outcomes, feature_win = self.build_drop_outcomes(
+            row_count=row_count,
+            balls_per_drop=free_balls,
+            stake_per_ball=stake_per_ball,
+        )
+        events.append(
+            {
+                "type": "bonusRound",
+                "freeBalls": free_balls,
+                "outcomes": outcomes,
+                "level": 1,
+                "ballsPlayed": 0,
+            }
+        )
+        return events, feature_win, 1
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:
         if segment == "BONUS":
@@ -155,6 +125,7 @@ class GameCalculations(Executables):
         outcomes: list[dict],
         row_count: int,
         stake_per_ball: float,
+        balls_per_drop: int = 0,
         spin_meter_start: int = 0,
         bonus_meter_start: int = 0,
         bonus_level_start: int = 0,
@@ -179,31 +150,32 @@ class GameCalculations(Executables):
         so the 1-ball tier (off) never fires — a single-hit trigger on a 1-ball bet can't be
         RTP-compliant with this wheel.
 
-        BONUS meter: unchanged — a SESSION meter delivered by the dedicated `bonus*` trigger mode.
-        `force_bonus` fires it unconditionally; base modes `suppress_features` so a full bonus meter
-        carries over and the trigger mode fires it next bet.
+        BONUS (Option #1 — separate `bonus<tier>` mode, normal-bet cost): the bonus is its OWN mode that
+        the client auto-fires when the meter fills (deterministic). Here `force_bonus` is set on that
+        mode's (empty-drop) book and runs `simulate_bonus_round(balls_per_drop)` — a single-level,
+        tier-sized bonus so the mode RTP ≈ TARGET_RTP at the tier cost. Base modes pass NO `force_bonus`;
+        their bonus meter just fills (`bonusMeter` events, client-side visual, persists across rounds)
+        and the full meter drives the client auto-fire of the bonus mode. (`suppress_features` is unused
+        now but kept for signature stability.)
         """
+        _ = suppress_features  # unused (kept for signature stability)
         events: list[dict] = []
         feature_win = 0.0
         spin_meter = max(0, int(spin_meter_start))
         bonus_meter = max(0, int(bonus_meter_start))
         bonus_level = max(0, int(bonus_level_start))
 
-        # Bonus trigger mode: fire unconditionally (checked before the empty-drop guard so it can run
-        # with an empty initial drop — its payout is just the bonus free balls).
+        # Bonus MODE: empty initial drop (`force_bonus`) → one tier-sized bonus round. Its payout is the
+        # whole book, so the mode RTP ≈ TARGET_RTP at the tier cost.
         if force_bonus:
+            balls = balls_per_drop if balls_per_drop > 0 else 10
             bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
-                bonus_meter_max=bonus_meter_max,
-                level_start=bonus_level,
+                balls_per_drop=balls,
             )
             events.extend(bonus_events)
             feature_win += bonus_win
-            return events, feature_win, spin_meter, 0, bonus_level
-
-        # Base / non-forced modes with no balls have nothing to walk.
-        if not outcomes:
             return events, feature_win, spin_meter, bonus_meter, bonus_level
 
         free_spin_fired = False
@@ -213,53 +185,29 @@ class GameCalculations(Executables):
                 events.append(
                     {"type": "bonusMeter", "value": bonus_meter, "level": bonus_level}
                 )
-                # Bonus stays a session-meter feature (trigger mode); base modes carry it over.
-                if bonus_meter >= bonus_meter_max and not suppress_features:
-                    bonus_meter = 0
-                    bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
-                        row_count=row_count,
-                        stake_per_ball=stake_per_ball,
-                        bonus_meter_max=bonus_meter_max,
-                        level_start=bonus_level,
-                    )
-                    events.extend(bonus_events)
-                    feature_win += bonus_win
+                # Base modes NEVER fire the bonus in-drop — a full meter drives the CLIENT's auto-fire of
+                # the dedicated `bonus<tier>` mode. The meter just fills + carries over (client session).
 
             if outcome.get("hitSpinSlot"):
                 spin_meter = min(spin_meter_max, spin_meter + 1)
                 events.append(
                     {"type": "spinMeter", "value": spin_meter, "max": spin_meter_max}
                 )
-                # Per-drop free spin: fires ONCE in-drop the moment the meter fills this round.
+                # Per-drop free spin: fires ONCE in-drop the moment the meter fills this round. The wheel
+                # has no BONUS segment, so it's always a numeric `stake × M` add on top of the drop.
                 if spin_in_drop and not free_spin_fired and spin_meter >= spin_meter_max:
                     free_spin_fired = True
                     segment = py_random.choice(self.FREE_SPIN_SEGMENTS)
                     multiplier = self._free_spin_segment_multiplier(segment)
-                    if segment == "BONUS":
-                        # BONUS segment chains directly into a bonus round.
-                        events.append(
-                            {"type": "freeSpinTrigger", "segment": segment, "multiplier": 0.0, "amount": 0.0}
-                        )
-                        bonus_events, bonus_win, bonus_level = self.simulate_bonus_round(
-                            row_count=row_count,
-                            stake_per_ball=stake_per_ball,
-                            bonus_meter_max=bonus_meter_max,
-                            level_start=bonus_level,
-                        )
-                        events.extend(bonus_events)
-                        feature_win += bonus_win
-                    else:
-                        # Multiplier applies to the BET PER BALL (fixed base) — payout = stake × M,
-                        # added on top of the drop win (NOT a multiply of the round's drop).
-                        free_spin_win = stake_per_ball * multiplier
-                        feature_win += free_spin_win
-                        events.append(
-                            {
-                                "type": "freeSpinTrigger",
-                                "segment": segment,
-                                "multiplier": multiplier,
-                                "amount": free_spin_win,
-                            }
-                        )
+                    free_spin_win = stake_per_ball * multiplier
+                    feature_win += free_spin_win
+                    events.append(
+                        {
+                            "type": "freeSpinTrigger",
+                            "segment": segment,
+                            "multiplier": multiplier,
+                            "amount": free_spin_win,
+                        }
+                    )
 
         return events, feature_win, spin_meter, bonus_meter, bonus_level
