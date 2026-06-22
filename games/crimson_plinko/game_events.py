@@ -38,15 +38,18 @@ def plinko_drop_event(
     )
 
 
-def bonus_meter_event(gamestate, *, value: int, level: int) -> None:
-    gamestate.book.add_event(
-        {
-            "index": len(gamestate.book.events),
-            "type": "bonusMeter",
-            "value": int(value),
-            "level": int(level),
-        }
-    )
+def bonus_meter_event(gamestate, *, value: int, level: int, max_value: int = 0) -> None:
+    event = {
+        "index": len(gamestate.book.events),
+        "type": "bonusMeter",
+        "value": int(value),
+        "level": int(level),
+    }
+    # In-bonus level-up meter carries its own max (the level-up threshold); trigger-phase events omit it
+    # and the client uses the per-tier plinkoDrop bonusMeterMax.
+    if max_value > 0:
+        event["max"] = int(max_value)
+    gamestate.book.add_event(event)
 
 
 def spin_meter_event(gamestate, *, value: int, max_value: int) -> None:

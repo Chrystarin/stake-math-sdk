@@ -49,7 +49,7 @@ class GameConfig(Config):
         # Exported to frontend config (apps/plinko coefficientSets shape).
         self.plinko_coefficient_sets = COEFFICIENT_SETS
         self.min_bet = 0.01
-        self.max_bet = 1000.0
+        self.max_bet = 2500.0
 
         # Default drop matches sim conditions. Stake mode cost = balls per tier; payout
         # multipliers are normalized to return-per-drop in game_override.update_final_win.

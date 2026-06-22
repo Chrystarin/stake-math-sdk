@@ -64,10 +64,10 @@ TARGET_RTP = 0.957
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
 BONUS_IN_DROP_RATE: dict[int, float] = {
-    1: 0.00103,
-    10: 0.00572,
-    20: 0.01462,
-    50: 0.04252,
+    1: 0.00130,
+    10: 0.00702,
+    20: 0.01743,
+    50: 0.04809,
 }
 
 
@@ -133,24 +133,22 @@ SPIN_METER_TIER: dict[int, dict[str, float]] = {
 # was bumped in step with this so level-ups stay a rare jackpot, not more common).
 BONUS_PEG_HIT_PROB = 0.18
 
-# Free-spin wheel segments (label list) — Aztec values INCLUDING a BONUS slot (lands → a bonus round).
-# The free spin fires IN-DROP (per-drop meter) and the multiplier applies to the BET PER BALL (a fixed
-# base): a numeric `M` pays `stake_per_ball × M` on top of the drop; `BONUS` chains a bonus round.
-# Rendered on the label-less `free-spin-roulette-wheel-empty.png` with a data-driven text overlay
-# (FreeSpinRoulette.svelte). Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_SEGMENTS.
-FREE_SPIN_SEGMENTS: list[str] = ["100X", "10X", "0.5X", "1X", "2X", "20X", "5X", "BONUS"]
+# Free-spin wheel segments (label list) — ORIGINAL values, baked into the labeled `free-spin-roulette-
+# wheel.png` (clockwise from the top marker). EQUAL weight (the labeled wheel has 8 equal slices). The
+# free spin fires IN-DROP (per-drop meter); a numeric `M` pays `stake_per_ball × M` on top of the drop;
+# `BONUS` (1-in-8) chains a bonus round. Order MUST match the PNG (index 0 = top). Mirror in apps/plinko
+# game-logic/constants.ts FREE_SPIN_SEGMENTS.
+FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X", "15X"]
 
-# Free-spin wheel WEIGHTS (index-aligned to FREE_SPIN_SEGMENTS; relative, need not sum to 100). The
-# visual wheel keeps 8 equal slices, but the LANDING is weighted so the big 100X / BONUS jackpots are
-# rare and the mid 0.5X–5X land often — this is what keeps the wheel's mean ≈ 5.4 (compliant) while the
-# wheel still appears frequently. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
-FREE_SPIN_WEIGHTS: list[float] = [1, 10, 22, 22, 20, 6, 18, 1]
+# Free-spin wheel WEIGHTS (index-aligned). EQUAL (all 1) — the labeled wheel is 8 equal slices, so the
+# landing is uniform. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
+FREE_SPIN_WEIGHTS: list[float] = [1, 1, 1, 1, 1, 1, 1, 1]
 
-# Bonus roulette ABSOLUTE free-ball awards (9 segments, Aztec values). Tier-INDEPENDENT (the bonus is a
-# free feature, so it dumps the same big ball counts on every tier — matching inout's up-to-250-ball
-# feel). avg ≈ 60 entry balls; level-ups add more (BONUS_LEVEL_BALLS). The CLIENT renders these on the
-# data-driven `bonus-roulette-wheel-empty.png` (mirror in apps/plinko game-logic/constants.ts).
-BONUS_WHEEL_FREE_BALLS: list[int] = [60, 90, 80, 40, 30, 100, 50, 70, 20]
+# Bonus roulette ABSOLUTE free-ball awards — ORIGINAL values, baked into the labeled `bonus-roulette-
+# wheel.png` (8 segments, clockwise from the top marker; avg ≈ 48.75 entry balls). Tier-INDEPENDENT;
+# level-ups add more (BONUS_LEVEL_BALLS). Order MUST match the PNG (index 0 = top = 100). Mirror in
+# apps/plinko game-logic/constants.ts.
+BONUS_WHEEL_FREE_BALLS: list[int] = [100, 20, 50, 50, 50, 80, 20, 20]
 
 
 def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:

@@ -57,6 +57,12 @@ class GameState(GameStateOverride):
                 balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
             )
+            # When the bonus is FORCED this round (quota) on a meter-tier (10/20/50), make enough of the
+            # drop's balls hit coin pegs so the bonus meter fills 0→max from REAL hits (no snap) — the
+            # player watches the meter fill to FULL, then the bonus fires. EV-neutral (coin pegs don't
+            # affect the pocket win). 1-ball can't fill a meter from one ball, so it keeps the snap.
+            if force_bonus and bonus_in_drop:
+                self.ensure_coin_pegs_fill_meter(outcomes, bonus_meter_max)
             (
                 feature_events,
                 feature_win,
@@ -101,7 +107,12 @@ class GameState(GameStateOverride):
             for event in feature_events:
                 event_type = event["type"]
                 if event_type == "bonusMeter":
-                    bonus_meter_event(self, value=event["value"], level=event["level"])
+                    bonus_meter_event(
+                        self,
+                        value=event["value"],
+                        level=event["level"],
+                        max_value=int(event.get("max", 0)),
+                    )
                 elif event_type == "bonusRoulette":
                     bonus_roulette_event(self, free_balls=event["freeBalls"])
                 elif event_type == "bonusRound":

@@ -70,6 +70,26 @@ class GameCalculations(Executables):
             )
         return outcomes, total_win
 
+    def ensure_coin_pegs_fill_meter(self, outcomes: list[dict], target: int) -> None:
+        """Turn on enough balls' `hitBonusPeg` so the (empty-start) bonus meter fills to `target` within
+        this drop. Used on the `force_bonus` trigger drop so the meter visibly fills to FULL from real
+        coin-peg hits (instead of snapping). EV-NEUTRAL: `hitBonusPeg` is independent of the ball's pocket
+        win, so flipping it changes nothing about the payout. Spreads the added hits across the drop so
+        the meter ramps up smoothly, completing near the end."""
+        if target <= 0 or not outcomes:
+            return
+        have = sum(1 for o in outcomes if o.get("hitBonusPeg"))
+        if have >= target:
+            return
+        without = [i for i, o in enumerate(outcomes) if not o.get("hitBonusPeg")]
+        to_add = min(target - have, len(without))
+        if to_add <= 0:
+            return
+        # Evenly spaced indices among the no-peg balls so the fill is gradual.
+        for k in range(to_add):
+            idx = without[(k * len(without)) // to_add]
+            outcomes[idx]["hitBonusPeg"] = True
+
     def _drop_win_from_outcomes(self, outcomes: list[dict], stake_per_ball: float) -> float:
         """Sum slot payouts for a drop (spin-pocket balls pay 0)."""
         stake = max(0.0, float(stake_per_ball))
@@ -102,8 +122,14 @@ class GameCalculations(Executables):
         entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
+        # The in-bonus "energy" meter starts EMPTY and fills as bonus balls hit coin pegs; when it reaches
+        # `levelup_max` the level advances (+`bonus_level_balls`) and the meter RESETS to empty. The meter
+        # carries its own `max` (the level-up threshold) so the client renders "fill bar → level up". A
+        # high threshold keeps the level-up escalation slow (no runaway), preserving the bonus EV/RTP.
+        levelup_max = BONUS_LEVELUP_PEG_HITS
         level = 1
-        peg_hits = 0
+        meter = 0
+        events.append({"type": "bonusMeter", "value": 0, "level": level, "max": levelup_max})
         pending: list[tuple[int, int]] = [(1, entry_balls)]
         while pending:
             cur_level, batch_balls = pending.pop(0)
@@ -122,13 +148,19 @@ class GameCalculations(Executables):
                     "ballsPlayed": 0,
                 }
             )
-            # Accumulate energy across this batch's balls → level-ups unlock the next batch.
+            # Fill the energy meter from this batch's coin pegs → level up when it tops out.
             for outcome in outcomes:
                 if outcome.get("hitBonusPeg"):
-                    peg_hits += 1
-                    if peg_hits >= BONUS_LEVELUP_PEG_HITS and level < MAX_BONUS_LEVEL:
-                        peg_hits = 0
+                    meter += 1
+                    events.append(
+                        {"type": "bonusMeter", "value": meter, "level": level, "max": levelup_max}
+                    )
+                    if meter >= levelup_max and level < MAX_BONUS_LEVEL:
+                        meter = 0
                         level += 1
+                        events.append(
+                            {"type": "bonusMeter", "value": 0, "level": level, "max": levelup_max}
+                        )
                         extra = bonus_level_balls(level)
                         if extra > 0:
                             pending.append((level, extra))
