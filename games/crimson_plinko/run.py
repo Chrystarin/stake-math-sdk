@@ -11,17 +11,18 @@ from src.write_data.write_configs import generate_configs
 
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
+    BONUS_IN_DROP_RATE,
     BONUS_LEVEL_BALLS,
     BONUS_METER_MAX,
+    BONUS_METER_TIER,
     BONUS_PEG_HIT_PROB,
-    BONUS_WHEEL_RELATIVE,
+    BONUS_WHEEL_FREE_BALLS,
     COEFFICIENT_SETS,
     FREE_SPIN_SEGMENTS,
-    METER_TIER_CONFIG,
+    FREE_SPIN_WEIGHTS,
     SPIN_METER_MAX,
     SPIN_METER_TIER,
     bet_mode_for_balls_per_drop,
-    bonus_mode_for_balls,
 )
 from publish_verify import sync_all_publish_files
 
@@ -88,14 +89,22 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     fe["bonusMeterMax"] = BONUS_METER_MAX
     fe["bonusPegHitProb"] = BONUS_PEG_HIT_PROB
     fe["freeSpinSegments"] = list(FREE_SPIN_SEGMENTS)
-    # Bonus wheel RELATIVE multipliers (avg ≈ 1). The client renders per-tier values = round(m × tier
-    # balls) on the data-driven `bonus-roulette-wheel-empty.png` (mirror in constants.ts).
-    fe["bonusWheelRelative"] = list(BONUS_WHEEL_RELATIVE)
+    # Free-spin wheel landing WEIGHTS (index-aligned to freeSpinSegments). The wheel shows 8 equal
+    # slices but lands weighted so 100X / BONUS are rare (mirror in constants.ts FREE_SPIN_WEIGHTS).
+    fe["freeSpinWeights"] = list(FREE_SPIN_WEIGHTS)
+    # Bonus wheel ABSOLUTE free-ball awards (Aztec values, tier-independent). The client renders these
+    # directly on the data-driven `bonus-roulette-wheel-empty.png` (mirror in constants.ts).
+    fe["bonusWheelFreeBalls"] = list(BONUS_WHEEL_FREE_BALLS)
+    # Per-tier in-drop bonus rate (the folded-bonus quota) — informational mirror for the client.
+    fe["bonusInDropRate"] = {str(balls): rate for balls, rate in BONUS_IN_DROP_RATE.items()}
     # Level-up table keyed by level string (JSON object) for the client to mirror.
     fe["bonusLevelBalls"] = {str(level): balls for level, balls in BONUS_LEVEL_BALLS.items()}
-    fe["meterTierConfig"] = {
-        str(balls): {"startRatio": cfg["start_ratio"], "maxRatio": cfg["max_ratio"]}
-        for balls, cfg in METER_TIER_CONFIG.items()
+    # Per-drop BONUS meter (max + start) per balls-per-drop tier (Option A). The client resets the meter
+    # each round to this start and fills it in-drop; reaching max fires the bonus. 1-ball is absent (its
+    # meter is cosmetic — bonus comes from the quota). Mirror in constants.ts BONUS_METER_TIER.
+    fe["bonusMeterTier"] = {
+        str(balls): {"max": int(cfg["max"]), "startRatio": cfg["start_ratio"]}
+        for balls, cfg in BONUS_METER_TIER.items()
     }
     # Per-drop free-spin meter (max + start) per balls-per-drop tier; the client uses this to reset
     # the meter each round and to re-seed the meter UI when the tier is switched. 1-ball is absent
@@ -122,14 +131,15 @@ if __name__ == "__main__":
     # pocket (p≈6e-5), so low tiers need many sims (mean over uniform weights); bump them (or use
     # PLINKO_BOOKS_COMPRESSION=1) if the ±0.5% band/spread is noisy on the low tiers.
     sims_div = max(1, int(os.getenv("PLINKO_SIM_DIV", "1")))  # set >1 for a fast smoke test
-    base_sims = {1: 400_000, 10: 200_000, 20: 120_000, 50: 80_000}
+    # FOLDED-BONUS DESIGN: only 4 base modes. Each mode mixes a normal-drop stratum (quota 1-rate) and a
+    # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
+    # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — baseone
+    # most of all (its whole feature add is that bonus). Bump if the ±0.5% band/spread is noisy.
+    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 160_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
     }
-    # Bonus modes are forced + SIZED (avg free balls ≈ tier, low variance), so they converge fast.
-    for balls in BALLS_PER_DROP_OPTIONS:
-        num_sim_args[bonus_mode_for_balls(balls)] = max(1000, 20_000 // sims_div)
 
     # Set PLINKO_RUN_SIMS=0 to only rebuild configs/publish files from existing books + LUTs.
     run_conditions = {"run_sims": os.getenv("PLINKO_RUN_SIMS", "1").lower() not in {"0", "false", "no"}}

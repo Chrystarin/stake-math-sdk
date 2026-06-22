@@ -11,7 +11,8 @@ from plinko_data import (
     COEFFICIENT_SETS,
     TARGET_RTP,
     bet_mode_for_balls_per_drop,
-    bonus_mode_for_balls,
+    bonus_in_drop_for_balls,
+    bonus_in_drop_rate,
     scaled_bonus_meter_start,
     scaled_spin_meter_start,
     spin_in_drop_for_balls,
@@ -64,6 +65,7 @@ class GameConfig(Config):
             force_bonus: bool = False,
             suppress_features: bool = False,
             spin_in_drop: bool = False,
+            bonus_in_drop: bool = False,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -76,24 +78,28 @@ class GameConfig(Config):
                 "force_bonus": bool(force_bonus),
                 "suppress_features": bool(suppress_features),
                 "spin_in_drop": bool(spin_in_drop),
+                "bonus_in_drop": bool(bonus_in_drop),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
             }
 
-        # Per balls-per-drop tier: a BASE mode (the paid drop) + a dedicated BONUS mode (deterministic
-        # auto-fire when the meter fills). The bonus mode costs the SAME as the base tier cost and its
-        # payout is SIZED (tier-scaled wheel) so its RTP ≈ TARGET_RTP — so triggering deducts exactly one
-        # normal bet (not 49×) and stays compliant. The free spin fires in-drop in the base modes.
+        # OPTION A (per-drop meter trigger): only 4 BASE modes (cost = ball count), NO separate bonus
+        # mode. The FREE bonus fires IN-DROP when this drop's coin-pegs fill the PER-DROP bonus meter
+        # (`bonus_in_drop`, on 10/20/50) — fully stateless. Each mode still has TWO distributions: the
+        # NORMAL drop (quota = 1 - rate; the meter fires the bonus organically) and a small `force_bonus`
+        # QUOTA (quota = rate) that covers 1-ball (can't meter-fire) and fine-tunes the higher tiers to
+        # exactly TARGET_RTP. The free spin fires in-drop in both. Board (~0.896) funds the free bonus.
         self.bet_modes = []
         for balls in BALLS_PER_DROP_OPTIONS:
             mode_name = bet_mode_for_balls_per_drop(balls)
             spin_start = scaled_spin_meter_start(balls)
             bonus_start = scaled_bonus_meter_start(balls)
             spin_in_drop = spin_in_drop_for_balls(balls)
+            bonus_in_drop = bonus_in_drop_for_balls(balls)
+            rate = bonus_in_drop_rate(balls)
+            normal_quota = max(0.0, 1.0 - rate)
 
-            # BASE mode — the player's paid drop. Bonus meter just fills (client-side session); a full
-            # meter drives the client's auto-fire of the bonus mode below. Free spin fires in-drop.
             self.bet_modes.append(
                 BetMode(
                     name=mode_name,
@@ -105,37 +111,30 @@ class GameConfig(Config):
                     is_feature=True,
                     is_buybonus=False,
                     distributions=[
+                        # Normal paid drop — the per-drop bonus meter (bonus_in_drop) fires the bonus when
+                        # this drop's coin-pegs fill it; the free spin can fire in-drop too.
                         Distribution(
                             criteria=f"basegame_balls_{balls}",
-                            quota=1.0,
+                            quota=normal_quota,
                             conditions=plinko_conditions(
                                 balls_per_drop=balls,
                                 spin_meter_start=spin_start,
                                 bonus_meter_start=bonus_start,
                                 spin_in_drop=spin_in_drop,
+                                bonus_in_drop=bonus_in_drop,
                             ),
                         ),
-                    ],
-                ),
-            )
-
-            # BONUS mode — auto-fired when the meter fills. Cost = tier cost; `force_bonus` ⇒ empty drop
-            # + a tier-sized bonus round, so RTP ≈ TARGET_RTP (no operator loss, no 49× debit).
-            self.bet_modes.append(
-                BetMode(
-                    name=bonus_mode_for_balls(balls),
-                    cost=float(balls),
-                    rtp=self.rtp,
-                    max_win=self.wincap,
-                    auto_close_disabled=False,
-                    is_feature=True,
-                    is_buybonus=False,
-                    distributions=[
+                        # QUOTA bonus stratum — guarantees a bonus (snaps the meter to full): covers
+                        # 1-ball and fine-tunes the others to TARGET_RTP. One book settles `drop + bonus`.
                         Distribution(
-                            criteria=f"bonus_balls_{balls}",
-                            quota=1.0,
+                            criteria=f"basegame_bonus_balls_{balls}",
+                            quota=rate,
                             conditions=plinko_conditions(
                                 balls_per_drop=balls,
+                                spin_meter_start=spin_start,
+                                bonus_meter_start=bonus_start,
+                                spin_in_drop=spin_in_drop,
+                                bonus_in_drop=bonus_in_drop,
                                 force_bonus=True,
                             ),
                         ),

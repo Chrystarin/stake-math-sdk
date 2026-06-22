@@ -35,6 +35,9 @@ class GameState(GameStateOverride):
         suppress_features = bool(conditions.get("suppress_features", False))
         # FREE SPIN is per-drop + in-drop: enabled on the 10/20/50 tiers, off on 1-ball.
         spin_in_drop = bool(conditions.get("spin_in_drop", False))
+        # BONUS is per-drop + in-drop (Option A): the meter fills from this drop's coin-pegs and fires
+        # the bonus when full. Enabled on 10/20/50; off on 1-ball (its bonus comes from the quota).
+        bonus_in_drop = bool(conditions.get("bonus_in_drop", False))
 
         self.repeat = True
         while self.repeat:
@@ -46,14 +49,12 @@ class GameState(GameStateOverride):
             spin_meter_max = scaled_spin_meter_max(balls_per_drop)
             bonus_meter_max = scaled_bonus_meter_max(balls_per_drop)
 
-            # The dedicated `bonus<tier>` mode is a pure feature bet: skip its initial drop so the payout
-            # is exactly the (tier-sized) bonus round. Base / free-spin rounds keep their real drop (the
-            # free spin fires in-drop on top of it). `plinkoDrop` still carries the tier balls_per_drop
-            # for the client's stratum check; only its outcomes are empty.
-            initial_drop_balls = 0 if force_bonus else balls_per_drop
+            # FOLDED-BONUS DESIGN: EVERY book plays the real paid drop — including the `force_bonus`
+            # stratum, where the bonus round is folded ON TOP (settling `drop + bonus` in one book). The
+            # free spin fires in-drop on top of the drop in either stratum.
             outcomes, total_win = self.build_drop_outcomes(
                 row_count=row_count,
-                balls_per_drop=initial_drop_balls,
+                balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
             )
             (
@@ -75,6 +76,7 @@ class GameState(GameStateOverride):
                 force_bonus=force_bonus,
                 suppress_features=suppress_features,
                 spin_in_drop=spin_in_drop,
+                bonus_in_drop=bonus_in_drop,
             )
             total_win += feature_win
 
