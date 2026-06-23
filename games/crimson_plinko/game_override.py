@@ -17,7 +17,7 @@ class GameStateOverride(GameExecutables):
         Stake RGS debits `amount × mode cost` but credits `amount × payoutMultiplier`, so the
         payout multiplier MUST be expressed relative to the play amount (stake_per_ball), NOT the
         total drop wager (balls × stake). Normalizing by the total wager understates the credited
-        payout by the `cost` (balls) factor — e.g. baseten credits 10× too little.
+        payout by the `cost` (balls) factor — e.g. tendrop credits 10× too little.
         """
         conditions = self.get_current_distribution_conditions()
         stake = float(conditions.get("stake_per_ball", self.stake_per_ball))

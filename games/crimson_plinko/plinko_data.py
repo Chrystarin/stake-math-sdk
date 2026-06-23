@@ -38,16 +38,16 @@ BALLS_PER_DROP_OPTIONS = (1, 10, 20, 50)
 # FOLDED-BONUS DESIGN: only these 4 BASE modes are published (cost = ball count); there is NO separate
 # bonus mode (a free big bonus can only exist funded by the base game — see game_config.py).
 BET_MODE_BY_BALLS_PER_DROP: dict[int, str] = {
-    1: "baseone",
-    10: "baseten",
-    20: "basetwenty",
-    50: "basefifty",
+    1: "onedrop",
+    10: "tendrop",
+    20: "twentydrop",
+    50: "fiftydrop",
 }
 
 
 def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
     balls = int(balls_per_drop)
-    return BET_MODE_BY_BALLS_PER_DROP.get(balls, "baseten")
+    return BET_MODE_BY_BALLS_PER_DROP.get(balls, "tendrop")
 
 
 # Declared RTP for the Stake Engine math summary. Each base mode = board EV + the rare in-drop bonus +
@@ -58,7 +58,7 @@ TARGET_RTP = 0.957
 # (BONUS_METER_TIER) fills from this drop's own coin-peg hits — NOT a cross-bet meter (statelessness:
 # each bet is independent). This `BONUS_IN_DROP_RATE` is now only a small `force_bonus` QUOTA used to
 # (a) give the 1-ball tier its bonus — 1-ball can't meter-fire (one ball ⇒ at most one coin-peg hit),
-# so it MUST come from a quota or baseone sits ~6% below the others and fails the cross-mode band; and
+# so it MUST come from a quota or onedrop sits ~6% below the others and fails the cross-mode band; and
 # (b) FINE-TUNE the higher tiers to exactly TARGET_RTP, since the meter fire rate is DISCRETE
 # (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL

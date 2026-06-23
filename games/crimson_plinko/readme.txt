@@ -22,7 +22,7 @@ library/configs/config.json before publishing.
 
 Balls per drop:
   RGS bet modes (use `/wallet/play` `mode`, not meta alone):
-    baseone (1 ball), baseten (10), basetwenty (20), basefifty (50)
+    onedrop (1 ball), tendrop (10), twentydrop (20), fiftydrop (50)
   Criteria in books: basegame_balls_1 / _10 / _20 / _50
   Optional play meta still mirrors distribution conditions (row_count, etc.).
 

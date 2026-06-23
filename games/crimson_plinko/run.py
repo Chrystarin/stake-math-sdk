@@ -133,7 +133,7 @@ if __name__ == "__main__":
     sims_div = max(1, int(os.getenv("PLINKO_SIM_DIV", "1")))  # set >1 for a fast smoke test
     # FOLDED-BONUS DESIGN: only 4 base modes. Each mode mixes a normal-drop stratum (quota 1-rate) and a
     # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
-    # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — baseone
+    # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — onedrop
     # most of all (its whole feature add is that bonus). Bump if the ±0.5% band/spread is noisy.
     base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 160_000}
     num_sim_args = {

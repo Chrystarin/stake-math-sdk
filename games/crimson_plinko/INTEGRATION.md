@@ -147,10 +147,10 @@ Stake Engine selects books by **`/wallet/play` `mode`**, not play `meta` alone. 
 
 | UI balls | Play `mode` | Book criteria |
 |----------|-------------|---------------|
-| 1 | `baseone` | `basegame_balls_1` |
-| 10 | `baseten` | `basegame_balls_10` |
-| 20 | `basetwenty` | `basegame_balls_20` |
-| 50 | `basefifty` | `basegame_balls_50` |
+| 1 | `onedrop` | `basegame_balls_1` |
+| 10 | `tendrop` | `basegame_balls_10` |
+| 20 | `twentydrop` | `basegame_balls_20` |
+| 50 | `fiftydrop` | `basegame_balls_50` |
 
 Each mode's LUT also contains the meter-start strata (`spin_meter_full_balls_10`, `bonus_meter_full_balls_10`, …) — the `basegame_balls_X` row above is just the zero-meter stratum.
 
