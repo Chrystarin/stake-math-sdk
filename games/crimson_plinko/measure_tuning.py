@@ -37,14 +37,18 @@ def analytic_board_ev() -> float:
     return total / denom
 
 
-def measure_bonus_mean(gs, n=40_000):
+def measure_bonus_mean(gs, balls=10, n=40_000):
+    # Per-tier now: the in-bonus free spin uses the tier's spin-meter max, so bonus_mean varies by tier.
     wins, balls_total, levels = [], [], []
+    fs_fires = 0
     for _ in range(n):
-        events, win, level = gs.simulate_bonus_round(row_count=ROW_COUNT, stake_per_ball=STAKE, balls_per_drop=10)
+        events, win, level = gs.simulate_bonus_round(row_count=ROW_COUNT, stake_per_ball=STAKE, balls_per_drop=balls)
         wins.append(win)
         balls_total.append(sum(e["freeBalls"] for e in events if e["type"] == "bonusRound"))
         levels.append(level)
-    return statistics.mean(wins), statistics.mean(balls_total), statistics.mean(levels), max(balls_total)
+        if any(e["type"] == "freeSpinTrigger" for e in events):
+            fs_fires += 1
+    return statistics.mean(wins), statistics.mean(balls_total), statistics.mean(levels), max(balls_total), fs_fires / n
 
 
 def measure_normal_feature(gs, balls, n=300_000):
@@ -75,20 +79,19 @@ def measure_normal_feature(gs, balls, n=300_000):
 def main():
     gs = GameState(GameConfig())
     board = analytic_board_ev()
-    bonus_mean, bonus_balls, bonus_level, bonus_max = measure_bonus_mean(gs)
     print(f"board_EV/ball (analytic) = {board:.5f}")
-    print(f"bonus_mean (pmult)       = {bonus_mean:.3f}   avg balls={bonus_balls:.1f}  avg level={bonus_level:.2f}  max balls={bonus_max}")
     print(f"target RTP               = {TARGET_RTP}\n")
-    print(f"{'tier':>5} {'fs_rate':>8} {'METER_bonus':>11} {'norm_win_E':>10} {'quota_top':>10} {'->mode_RTP':>11}")
+    print(f"{'tier':>5} {'bonus_mean':>10} {'inB_fs':>7} {'fs_rate':>8} {'norm_win_E':>10} {'quota_top':>10} {'->mode_RTP':>11}")
     solved = {}
     for balls in BALLS_PER_DROP_OPTIONS:
+        bonus_mean, bballs, blevel, bmax, inbonus_fs = measure_bonus_mean(gs, balls, n=20_000)
         norm_win, fs_rate, meter_bonus_rate = measure_normal_feature(gs, balls)
         # The quota tops up whatever the meter-driven normal stratum doesn't already supply.
         need_pmult = (TARGET_RTP - board) * balls
         rate = max(0.0, (need_pmult - norm_win) / bonus_mean)
         mode_rtp = board + (norm_win + rate * bonus_mean) / balls
         solved[balls] = rate
-        print(f"{balls:>5} {fs_rate*100:>7.3f}% {meter_bonus_rate*100:>10.3f}% {norm_win:>10.4f} {rate:>10.5f} {mode_rtp*100:>10.3f}%")
+        print(f"{balls:>5} {bonus_mean:>10.3f} {inbonus_fs*100:>6.1f}% {fs_rate*100:>7.3f}% {norm_win:>10.4f} {rate:>10.5f} {mode_rtp*100:>10.3f}%")
     print("\nBONUS_IN_DROP_RATE = {")
     for balls in BALLS_PER_DROP_OPTIONS:
         print(f"    {balls}: {solved[balls]:.5f},")

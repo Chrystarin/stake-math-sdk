@@ -17,6 +17,8 @@ from plinko_data import (
     bonus_level_balls,
     bonus_wheel_free_balls,
     coefficients_for,
+    scaled_spin_meter_max,
+    spin_in_drop_for_balls,
     spin_slot_index,
 )
 from src.executables.executables import Executables
@@ -116,19 +118,30 @@ class GameCalculations(Executables):
         balls (`bonus_level_balls`, up to `MAX_BONUS_LEVEL`) — the inout "accumulate energy → unlock more
         drops, up to ~250 balls" escalation (a rare jackpot). Each level emits its own `bonusRound` so the
         client animates the level-ups in order. Returns (events, feature_win, final_level).
+
+        IN-BONUS ENERGY METER: starts EMPTY; the client fills it provisionally as bonus balls hit coin
+        pegs and RESETS it on a level-up. We emit ONE `bonusMeter(value=0, max=levelup_max)` to set the
+        client's in-bonus max + reset; the per-ball fill/reset is client-driven (so it tracks the balls
+        smoothly instead of jumping). The level-up itself stays server-authoritative here (peg counter).
+
+        IN-BONUS FREE SPIN: the spin meter also fills from the bonus balls' spin-pocket hits; if it tops
+        out (gated by `spin_in_drop`, off on 1-ball) the free spin fires ONCE as a TRAILING
+        `freeSpinTrigger` after all bonus balls — the client defers the wheel until the balls deplete and
+        adds `stake × M` to the bonus total. Numeric-only (re-pick if it lands BONUS) to avoid recursion.
         """
         events: list[dict] = []
         feature_win = 0.0
         entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        # The in-bonus "energy" meter starts EMPTY and fills as bonus balls hit coin pegs; when it reaches
-        # `levelup_max` the level advances (+`bonus_level_balls`) and the meter RESETS to empty. The meter
-        # carries its own `max` (the level-up threshold) so the client renders "fill bar → level up". A
-        # high threshold keeps the level-up escalation slow (no runaway), preserving the bonus EV/RTP.
         levelup_max = BONUS_LEVELUP_PEG_HITS
+        spin_max = scaled_spin_meter_max(balls_per_drop)
+        spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
         level = 1
         meter = 0
+        spin_meter = 0
+        free_spin_fired = False
+        # One reset event → tells the client the in-bonus meter max + starts it empty.
         events.append({"type": "bonusMeter", "value": 0, "level": level, "max": levelup_max})
         pending: list[tuple[int, int]] = [(1, entry_balls)]
         while pending:
@@ -148,22 +161,39 @@ class GameCalculations(Executables):
                     "ballsPlayed": 0,
                 }
             )
-            # Fill the energy meter from this batch's coin pegs → level up when it tops out.
+            # Walk this batch's balls: coin pegs fill the energy meter → level up; spin-pocket hits fill
+            # the spin meter → the trailing in-bonus free spin.
             for outcome in outcomes:
                 if outcome.get("hitBonusPeg"):
                     meter += 1
-                    events.append(
-                        {"type": "bonusMeter", "value": meter, "level": level, "max": levelup_max}
-                    )
                     if meter >= levelup_max and level < MAX_BONUS_LEVEL:
                         meter = 0
                         level += 1
-                        events.append(
-                            {"type": "bonusMeter", "value": 0, "level": level, "max": levelup_max}
-                        )
                         extra = bonus_level_balls(level)
                         if extra > 0:
                             pending.append((level, extra))
+                if spin_in_drop and not free_spin_fired and outcome.get("hitSpinSlot"):
+                    spin_meter += 1
+                    if spin_meter >= spin_max:
+                        free_spin_fired = True
+
+        # Trailing in-bonus free spin (numeric only — a BONUS landing is re-rolled to avoid a recursive
+        # bonus). The client defers the wheel until the bonus balls deplete and adds the win to the bonus.
+        if free_spin_fired:
+            segment = self._pick_free_spin_segment()
+            while segment == "BONUS":
+                segment = self._pick_free_spin_segment()
+            multiplier = self._free_spin_segment_multiplier(segment)
+            free_spin_win = stake_per_ball * multiplier
+            feature_win += free_spin_win
+            events.append(
+                {
+                    "type": "freeSpinTrigger",
+                    "segment": segment,
+                    "multiplier": multiplier,
+                    "amount": free_spin_win,
+                }
+            )
         return events, feature_win, level
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:

@@ -65,9 +65,9 @@ TARGET_RTP = 0.957
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
 BONUS_IN_DROP_RATE: dict[int, float] = {
     1: 0.00130,
-    10: 0.00702,
-    20: 0.01743,
-    50: 0.04809,
+    10: 0.00584,
+    20: 0.01572,
+    50: 0.04630,
 }
 
 
