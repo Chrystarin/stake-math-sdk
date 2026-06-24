@@ -54,6 +54,34 @@ def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
 # the rare in-drop free spin. Every mode should cluster within ±0.5% and stay inside 90.00%-96.70%.
 TARGET_RTP = 0.957
 
+# ---------------------------------------------------------------------------
+# Per-tier max win (wincap) ladder.
+# ---------------------------------------------------------------------------
+# Stake requires the ADVERTISED max win to be ACHIEVABLE (hit-rate >= 1/20,000,000). The folded bonus is
+# tier-independent in absolute ball mechanics, but higher tiers sample it more, so each tier's organic
+# payout ceiling differs (measured maxima at the published sim counts: 1-ball ~214x, 10 ~287x, 20 ~323x,
+# 50 ~430x). A single flat cap would either be unreachable on the low tiers (e.g. 300x on 1-ball) or
+# throw away the high-tier tail. So the wincap is PER-TIER, set at/just below each tier's organic max:
+# the cap binds only the thin tail above it (creating an achievable spike exactly AT the advertised max)
+# while removing almost no EV (RTP stays put, no re-tune). This matches the UI story "more balls / higher
+# risk => bigger potential payouts". The SDK applies it per mode automatically: BetMode.max_win below is
+# wincap_for_balls(balls), and src/state/run_sims.py sets gamestate.config.wincap = bm.get_wincap() before
+# each mode's sims, so game_override.update_final_win caps the per-ball payout multiplier at this value.
+WINCAP_BY_BALLS: dict[int, float] = {
+    1: 200.0,
+    10: 250.0,
+    20: 300.0,
+    50: 400.0,
+}
+
+# Default/global wincap = the top of the ladder (used before any per-mode override).
+DEFAULT_WINCAP = max(WINCAP_BY_BALLS.values())
+
+
+def wincap_for_balls(balls_per_drop: int) -> float:
+    """Per-tier max-win multiplier (per stake_per_ball). Falls back to the ladder max."""
+    return float(WINCAP_BY_BALLS.get(int(balls_per_drop), DEFAULT_WINCAP))
+
 # OPTION A (per-drop meter trigger): the bonus fires IN-DROP when the PER-DROP bonus meter
 # (BONUS_METER_TIER) fills from this drop's own coin-peg hits — NOT a cross-bet meter (statelessness:
 # each bet is independent). This `BONUS_IN_DROP_RATE` is now only a small `force_bonus` QUOTA used to

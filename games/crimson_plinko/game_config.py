@@ -9,6 +9,7 @@ from src.config.paths import PATH_TO_GAMES
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
     COEFFICIENT_SETS,
+    DEFAULT_WINCAP,
     TARGET_RTP,
     bet_mode_for_balls_per_drop,
     bonus_in_drop_for_balls,
@@ -16,6 +17,7 @@ from plinko_data import (
     scaled_bonus_meter_start,
     scaled_spin_meter_start,
     spin_in_drop_for_balls,
+    wincap_for_balls,
 )
 
 # Math package folder (make run GAME=crimson_plinko); RGS gameID is one_eyed_willys_plinko.
@@ -31,7 +33,12 @@ class GameConfig(Config):
         self.provider_name = "casino_tv"
         self.provider_number = 0
         self.working_name = "One-Eyed Willy's Plinko"
-        self.wincap = 1000.0
+        # Default/global cap = top of the per-tier ladder (plinko_data.WINCAP_BY_BALLS). The advertised
+        # max win is PER-TIER (200/250/300/400 for 1/10/20/50 balls) so that each tier's declared max is
+        # actually achievable in its own books (Stake: max win must hit >= 1/20,000,000). run_sims.py
+        # overrides config.wincap with each BetMode.max_win below before that mode's sims, so books +
+        # config.json maxWin are capped per tier; this default only applies pre-override.
+        self.wincap = DEFAULT_WINCAP
         self.win_type = "other"
         # Declared RTP = the tuned per-ball board EV (matches the actual ~95.7% every mode produces;
         # stays inside the 90.0%-96.70% compliance band, unlike the old 0.97 placeholder).
@@ -106,7 +113,10 @@ class GameConfig(Config):
                     # Play `amount` = per-ball stake from betLevels; cost = balls per tier.
                     cost=float(balls),
                     rtp=self.rtp,
-                    max_win=self.wincap,
+                    # Per-tier advertised max win (achievable in this tier's own books). run_sims sets
+                    # gamestate.config.wincap = this value before the mode's sims, so the per-ball payout
+                    # multiplier is capped here and config.json publishes it as the mode's maxWin.
+                    max_win=wincap_for_balls(balls),
                     auto_close_disabled=False,
                     is_feature=True,
                     is_buybonus=False,

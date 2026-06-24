@@ -195,8 +195,17 @@ def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
             "Re-run simulations from a clean library/ temp folder."
         )
 
+    # Per-mode wincap: after create_books, gamestate.config.wincap is left at the LAST simulated mode's
+    # value, but each mode has its own cap (plinko_data.WINCAP_BY_BALLS) and update_final_win capped this
+    # mode's books at that per-mode value during the sim (run_sims sets config.wincap = bm.get_wincap()).
+    # Reconstruct the feature payout with the SAME per-mode cap, else a tier whose books capped below the
+    # global wincap (e.g. onedrop 200x vs fiftydrop 400x) is falsely flagged as a feature mismatch.
+    mode_wincap = next(
+        (bm.get_wincap() for bm in gamestate.config.bet_modes if bm.get_name() == betmode),
+        float(gamestate.config.wincap),
+    )
     feature_mismatches = find_feature_payout_mismatches(
-        books_json, wincap=float(gamestate.config.wincap)
+        books_json, wincap=float(mode_wincap)
     )
     if feature_mismatches:
         sample = feature_mismatches[:5]
