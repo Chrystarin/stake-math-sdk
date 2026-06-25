@@ -38,6 +38,11 @@ class GameState(GameStateOverride):
         # BONUS is per-drop + in-drop (Option A): the meter fills from this drop's coin-pegs and fires
         # the bonus when full. Enabled on 10/20/50; off on 1-ball (its bonus comes from the quota).
         bonus_in_drop = bool(conditions.get("bonus_in_drop", False))
+        # BUY BONUS modes: bonus-only (empty paid drop) + the bonus seeded with a FIXED entry-ball count.
+        # The meter is pre-filled to FULL so the client renders it full at round start (the bonus fires
+        # immediately) — the bought balls then combine with the in-bonus level-up / chain balls.
+        bonus_only = bool(conditions.get("bonus_only", False))
+        buy_entry_balls = max(0, int(conditions.get("buy_entry_balls", 0)))
 
         self.repeat = True
         while self.repeat:
@@ -49,14 +54,23 @@ class GameState(GameStateOverride):
             spin_meter_max = scaled_spin_meter_max(balls_per_drop)
             bonus_meter_max = scaled_bonus_meter_max(balls_per_drop)
 
-            # FOLDED-BONUS DESIGN: EVERY book plays the real paid drop — including the `force_bonus`
+            # BUY BONUS: pre-fill the bonus meter to FULL so the client shows it full at round start (the
+            # bonus fires immediately). force_bonus also drives the actual fire in build_feature_meter_events.
+            if bonus_only:
+                bonus_meter_at_bet_start = bonus_meter_max
+
+            # FOLDED-BONUS DESIGN: base books play the real paid drop — including the `force_bonus`
             # stratum, where the bonus round is folded ON TOP (settling `drop + bonus` in one book). The
-            # free spin fires in-drop on top of the drop in either stratum.
-            outcomes, total_win = self.build_drop_outcomes(
-                row_count=row_count,
-                balls_per_drop=balls_per_drop,
-                stake_per_ball=stake_per_ball,
-            )
+            # free spin fires in-drop on top of the drop in either stratum. BUY BONUS modes (`bonus_only`)
+            # instead play an EMPTY drop so the book settles `bonus` only.
+            if bonus_only:
+                outcomes, total_win = [], 0.0
+            else:
+                outcomes, total_win = self.build_drop_outcomes(
+                    row_count=row_count,
+                    balls_per_drop=balls_per_drop,
+                    stake_per_ball=stake_per_ball,
+                )
             # When the bonus is FORCED this round (quota) on a meter-tier (10/20/50), make enough of the
             # drop's balls hit coin pegs so the bonus meter fills 0→max from REAL hits (no snap) — the
             # player watches the meter fill to FULL, then the bonus fires. EV-neutral (coin pegs don't
@@ -83,6 +97,7 @@ class GameState(GameStateOverride):
                 suppress_features=suppress_features,
                 spin_in_drop=spin_in_drop,
                 bonus_in_drop=bonus_in_drop,
+                buy_entry_balls=buy_entry_balls,
             )
             total_win += feature_win
 

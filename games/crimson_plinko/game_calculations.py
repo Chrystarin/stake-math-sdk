@@ -108,6 +108,7 @@ class GameCalculations(Executables):
         row_count: int,
         stake_per_ball: float,
         balls_per_drop: int,
+        entry_balls_override: int = 0,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -131,7 +132,12 @@ class GameCalculations(Executables):
         """
         events: list[dict] = []
         feature_win = 0.0
-        entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
+        # BUY BONUS passes a FIXED starting-ball count (the bought tier's entry); otherwise draw the entry
+        # from the random bonus wheel. Level-ups below still add MORE balls on top in either case.
+        if entry_balls_override and entry_balls_override > 0:
+            entry_balls = int(entry_balls_override)
+        else:
+            entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
         levelup_max = BONUS_LEVELUP_PEG_HITS
@@ -224,6 +230,7 @@ class GameCalculations(Executables):
         suppress_features: bool = False,
         spin_in_drop: bool = False,
         bonus_in_drop: bool = False,
+        buy_entry_balls: int = 0,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -318,6 +325,8 @@ class GameCalculations(Executables):
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
                 balls_per_drop=balls,
+                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel).
+                entry_balls_override=buy_entry_balls,
             )
             events.extend(bonus_events)
             feature_win += bonus_win

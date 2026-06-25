@@ -11,9 +11,12 @@ from plinko_data import (
     COEFFICIENT_SETS,
     DEFAULT_WINCAP,
     TARGET_RTP,
+    BUY_BONUS_BALLS_PER_DROP_REF,
+    BUY_BONUS_TIER_DEFS,
     bet_mode_for_balls_per_drop,
     bonus_in_drop_for_balls,
     bonus_in_drop_rate,
+    buy_bonus_mode_name,
     scaled_bonus_meter_start,
     scaled_spin_meter_start,
     spin_in_drop_for_balls,
@@ -73,6 +76,8 @@ class GameConfig(Config):
             suppress_features: bool = False,
             spin_in_drop: bool = False,
             bonus_in_drop: bool = False,
+            bonus_only: bool = False,
+            buy_entry_balls: int = 0,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -86,6 +91,10 @@ class GameConfig(Config):
                 "suppress_features": bool(suppress_features),
                 "spin_in_drop": bool(spin_in_drop),
                 "bonus_in_drop": bool(bonus_in_drop),
+                # BUY BONUS: empty paid drop (no base balls) + the bonus seeded with `buy_entry_balls`
+                # fixed entry balls; the meter is pre-filled to full in gamestate. Settles `bonus` only.
+                "bonus_only": bool(bonus_only),
+                "buy_entry_balls": int(buy_entry_balls),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -146,6 +155,42 @@ class GameConfig(Config):
                                 spin_in_drop=spin_in_drop,
                                 bonus_in_drop=bonus_in_drop,
                                 force_bonus=True,
+                            ),
+                        ),
+                    ],
+                ),
+            )
+
+        # BUY BONUS modes (is_buybonus, one-shot) — one per tier (cost is ×bet-per-ball, independent of
+        # the player's balls-per-drop → exactly 4 modes). Each is BONUS-ONLY: an EMPTY paid drop + a
+        # forced bonus seeded with the tier's FIXED entry balls, with the bonus meter pre-filled to full.
+        # The in-bonus level-up / chain hits add MORE balls on top (combined total). cost comes from the
+        # PDF; entry_balls are tuned so RTP ≈ TARGET_RTP at that fixed cost. Per-tier max_win binds the
+        # thin tail (achievable advertised max). Mirror in web config.ts.
+        for tier in BUY_BONUS_TIER_DEFS:
+            name = buy_bonus_mode_name(tier["key"])
+            self.bet_modes.append(
+                BetMode(
+                    name=name,
+                    cost=float(tier["cost"]),
+                    rtp=self.rtp,
+                    max_win=float(tier["wincap"]),
+                    auto_close_disabled=False,
+                    is_feature=False,
+                    is_buybonus=True,
+                    distributions=[
+                        Distribution(
+                            criteria=f"buybonus_{name}",
+                            quota=1.0,
+                            conditions=plinko_conditions(
+                                balls_per_drop=BUY_BONUS_BALLS_PER_DROP_REF,
+                                force_bonus=True,
+                                bonus_only=True,
+                                buy_entry_balls=int(tier["entry_balls"]),
+                                # In-bonus free spin stays on (off only on 1-ball); no in-drop spin/bonus
+                                # since the buy drop is empty.
+                                spin_in_drop=False,
+                                bonus_in_drop=False,
                             ),
                         ),
                     ],

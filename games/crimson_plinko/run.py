@@ -11,6 +11,7 @@ from src.write_data.write_configs import generate_configs
 
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
+    BUY_BONUS_TIER_DEFS,
     BONUS_IN_DROP_RATE,
     BONUS_LEVEL_BALLS,
     BONUS_METER_MAX,
@@ -23,6 +24,7 @@ from plinko_data import (
     SPIN_METER_MAX,
     SPIN_METER_TIER,
     bet_mode_for_balls_per_drop,
+    buy_bonus_mode_name,
 )
 from publish_verify import sync_all_publish_files
 
@@ -140,6 +142,18 @@ if __name__ == "__main__":
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
     }
+    # BUY BONUS modes (4 = one per tier) are always-bonus + high-variance (deep level-ups), so they need
+    # heavy sims to converge their RTP and surface the max-win spike at the cap (>= 1/20M).
+    buy_sims = 200_000
+    for tier in BUY_BONUS_TIER_DEFS:
+        num_sim_args[buy_bonus_mode_name(tier["key"])] = max(1000, buy_sims // sims_div)
+
+    # Dev aid: PLINKO_ONLY_MODES=buystandard,buysuperfury restricts the SIM step to those modes (existing
+    # books for the others are reused by publish/config). Lets you re-sim just the buy modes when tuning
+    # entry/wincap without re-running the slow base-mode sims. Empty = sim all modes.
+    only_modes = {m.strip() for m in os.getenv("PLINKO_ONLY_MODES", "").split(",") if m.strip()}
+    if only_modes:
+        num_sim_args = {m: n for m, n in num_sim_args.items() if m in only_modes}
 
     # Set PLINKO_RUN_SIMS=0 to only rebuild configs/publish files from existing books + LUTs.
     run_conditions = {"run_sims": os.getenv("PLINKO_RUN_SIMS", "1").lower() not in {"0", "false", "no"}}

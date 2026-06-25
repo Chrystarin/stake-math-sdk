@@ -218,6 +218,58 @@ def bonus_level_balls(level: int) -> int:
     return int(BONUS_LEVEL_BALLS.get(int(level), 0))
 
 
+# ---------------------------------------------------------------------------
+# BUY BONUS — 4 purchasable tiers that instantly trigger the bonus (is_buybonus modes).
+# ---------------------------------------------------------------------------
+# A buy is BONUS-ONLY: it plays NO paid base drop. The round opens with the bonus meter pre-filled to
+# FULL, which fires the bonus immediately; the bonus is seeded with the tier's FIXED `entry_balls`
+# (overriding the random bonus wheel), then the usual in-bonus level-up / chain hits add MORE balls on
+# top — so the "roulette-won" balls combine with the bought balls (total = entry + level-up balls).
+# cost is ×bet-per-ball (a Stake mode's cost is ALWAYS ×amount, never ×total-bet), taken straight from
+# the Crimson Plinko rule-set PDF (80/100/150/250). Because the cost is FIXED to the PDF, the
+# `entry_balls` are TUNED (measure_tuning.py) so RTP = mean(min(bonus_payout, wincap)) / cost ≈
+# TARGET_RTP. The per-tier `wincap` is the advertised max win (must be achievable ≥ 1/20M and not over-
+# clip EV below target). One published mode per tier, `buy{key}` (e.g. buystandard). Mirror in apps/plinko
+# game/config.ts + game/plinkoBetMode.ts. INITIAL entry estimates — pin via measure_tuning.py + run.py.
+# entry_balls tuned via measure_buybonus.py (n=25k) so RTP = mean(min(payout, wincap)) / cost ≈ 95.7%
+# at the fixed PDF cost. wincap set at/just below each tier's organic payout max (achievable + binds the
+# thin tail). Re-pinned by the full run.py sims (report_mode_rtp) + compliance_report.py.
+BUY_BONUS_TIER_DEFS: list[dict] = [
+    {"key": "standard", "entry_balls": 71, "cost": 80.0, "wincap": 300.0},
+    {"key": "enhanced", "entry_balls": 86, "cost": 100.0, "wincap": 340.0},
+    {"key": "premium", "entry_balls": 125, "cost": 150.0, "wincap": 450.0},
+    {"key": "superfury", "entry_balls": 179, "cost": 250.0, "wincap": 600.0},
+]
+
+# Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
+# max scaling (entry + level-up balls are bpd-independent), so the buy EV is identical regardless of the
+# player's balls-per-drop selector → exactly 4 modes (cost independent of bpd). 10 keeps the in-bonus
+# free spin enabled (it is off only on the 1-ball tier).
+BUY_BONUS_BALLS_PER_DROP_REF = 10
+
+BUY_BONUS_TIER_BY_KEY: dict[str, dict] = {t["key"]: t for t in BUY_BONUS_TIER_DEFS}
+
+
+def buy_bonus_mode_name(tier_key: str) -> str:
+    """RGS `/wallet/play` mode for a buy tier (mirror web `buyBonusModeName`), e.g. buystandard."""
+    return f"buy{tier_key}"
+
+
+def buy_bonus_entry_balls(tier_key: str) -> int:
+    tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
+    return int(tier["entry_balls"]) if tier else 0
+
+
+def buy_bonus_cost(tier_key: str) -> float:
+    tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
+    return float(tier["cost"]) if tier else 0.0
+
+
+def buy_bonus_wincap(tier_key: str) -> float:
+    tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
+    return float(tier["wincap"]) if tier else DEFAULT_WINCAP
+
+
 def _js_round(value: float) -> int:
     """Match apps/plinko `Math.round` (round half up, not Python banker's `round`)."""
     return int(math.floor(value + 0.5))
