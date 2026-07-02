@@ -45,6 +45,9 @@ class GameState(GameStateOverride):
         buy_entry_balls = max(0, int(conditions.get("buy_entry_balls", 0)))
         # BUY BONUS Fury-meter head-start (in-bonus level-up meter starting fill, 0..1).
         buy_levelup_head_start = max(0.0, float(conditions.get("buy_levelup_head_start", 0.0)))
+        # BUY BONUS level-up peg threshold (buy-only; 0 = the global BONUS_LEVELUP_PEG_HITS). A higher
+        # threshold makes in-bonus level-ups rarer so the fixed entry-ball count tunes RTP smoothly.
+        buy_levelup_pegs = max(0, int(conditions.get("buy_levelup_pegs", 0)))
 
         self.repeat = True
         while self.repeat:
@@ -101,6 +104,7 @@ class GameState(GameStateOverride):
                 bonus_in_drop=bonus_in_drop,
                 buy_entry_balls=buy_entry_balls,
                 buy_levelup_head_start=buy_levelup_head_start,
+                buy_levelup_pegs=buy_levelup_pegs,
             )
             total_win += feature_win
 

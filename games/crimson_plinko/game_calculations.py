@@ -110,6 +110,7 @@ class GameCalculations(Executables):
         balls_per_drop: int,
         entry_balls_override: int = 0,
         levelup_head_start: float = 0.0,
+        levelup_pegs_override: int = 0,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -141,7 +142,14 @@ class GameCalculations(Executables):
             entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        levelup_max = BONUS_LEVELUP_PEG_HITS
+        # BUY BONUS may raise the level-up peg threshold (buy-only, via levelup_pegs_override): rarer
+        # level-ups tame the snowball so the FIXED entry-ball count is a smooth, precise RTP lever
+        # (a natural/earned bonus passes 0 here and keeps the global BONUS_LEVELUP_PEG_HITS).
+        levelup_max = (
+            int(levelup_pegs_override)
+            if levelup_pegs_override and levelup_pegs_override > 0
+            else BONUS_LEVELUP_PEG_HITS
+        )
         spin_max = scaled_spin_meter_max(balls_per_drop)
         spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
         level = 1
@@ -241,6 +249,7 @@ class GameCalculations(Executables):
         bonus_in_drop: bool = False,
         buy_entry_balls: int = 0,
         buy_levelup_head_start: float = 0.0,
+        buy_levelup_pegs: int = 0,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -335,10 +344,12 @@ class GameCalculations(Executables):
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
                 balls_per_drop=balls,
-                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel) and the
-                # tier's Fury-meter head-start (in-bonus level-up meter starting fill).
+                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel), the
+                # tier's Fury-meter head-start (in-bonus level-up meter starting fill), and the tier's
+                # buy-only level-up peg threshold (0 = the global BONUS_LEVELUP_PEG_HITS).
                 entry_balls_override=buy_entry_balls,
                 levelup_head_start=buy_levelup_head_start,
+                levelup_pegs_override=buy_levelup_pegs,
             )
             events.extend(bonus_events)
             feature_win += bonus_win

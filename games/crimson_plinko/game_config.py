@@ -79,6 +79,7 @@ class GameConfig(Config):
             bonus_only: bool = False,
             buy_entry_balls: int = 0,
             buy_levelup_head_start: float = 0.0,
+            buy_levelup_pegs: int = 0,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -97,6 +98,7 @@ class GameConfig(Config):
                 "bonus_only": bool(bonus_only),
                 "buy_entry_balls": int(buy_entry_balls),
                 "buy_levelup_head_start": float(buy_levelup_head_start),
+                "buy_levelup_pegs": int(buy_levelup_pegs),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -190,6 +192,7 @@ class GameConfig(Config):
                                 bonus_only=True,
                                 buy_entry_balls=int(tier["entry_balls"]),
                                 buy_levelup_head_start=float(tier.get("head_start", 0.0)),
+                                buy_levelup_pegs=int(tier.get("levelup_pegs", 0)),
                                 # In-bonus free spin stays on (off only on 1-ball); no in-drop spin/bonus
                                 # since the buy drop is empty.
                                 spin_in_drop=False,
