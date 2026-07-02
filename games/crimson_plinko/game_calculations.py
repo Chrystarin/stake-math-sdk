@@ -109,6 +109,7 @@ class GameCalculations(Executables):
         stake_per_ball: float,
         balls_per_drop: int,
         entry_balls_override: int = 0,
+        levelup_head_start: float = 0.0,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -144,11 +145,16 @@ class GameCalculations(Executables):
         spin_max = scaled_spin_meter_max(balls_per_drop)
         spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
         level = 1
-        meter = 0
+        # BUY BONUS "Fury Meter Head-Start": the in-bonus level-up meter starts this fraction filled, so a
+        # bought higher tier reaches its first level-up (chain → extra free balls) sooner. Applies ONCE (to
+        # level 1); the meter resets to 0 on each level-up below. Clamp below `levelup_max` so it can't
+        # auto-fire a level before any ball drops.
+        head_start = max(0.0, min(1.0, float(levelup_head_start)))
+        meter_start = min(levelup_max - 1, int(round(head_start * levelup_max))) if levelup_max > 0 else 0
+        meter = meter_start
         spin_meter = 0
-        free_spin_fired = False
-        # One reset event → tells the client the in-bonus meter max + starts it empty.
-        events.append({"type": "bonusMeter", "value": 0, "level": level, "max": levelup_max})
+        # One reset event → tells the client the in-bonus meter max + its starting fill (head-start).
+        events.append({"type": "bonusMeter", "value": meter_start, "level": level, "max": levelup_max})
         pending: list[tuple[int, int]] = [(1, entry_balls)]
         while pending:
             cur_level, batch_balls = pending.pop(0)
@@ -167,8 +173,8 @@ class GameCalculations(Executables):
                     "ballsPlayed": 0,
                 }
             )
-            # Walk this batch's balls: coin pegs fill the energy meter → level up; spin-pocket hits fill
-            # the spin meter → the trailing in-bonus free spin.
+            # Walk this batch's balls: coin pegs fill the energy meter → queue a level-up; spin-pocket
+            # hits fill the spin meter. The free spin fires PER LEVEL (below), before the level-up.
             for outcome in outcomes:
                 if outcome.get("hitBonusPeg"):
                     meter += 1
@@ -178,28 +184,31 @@ class GameCalculations(Executables):
                         extra = bonus_level_balls(level)
                         if extra > 0:
                             pending.append((level, extra))
-                if spin_in_drop and not free_spin_fired and outcome.get("hitSpinSlot"):
+                if spin_in_drop and outcome.get("hitSpinSlot"):
                     spin_meter += 1
-                    if spin_meter >= spin_max:
-                        free_spin_fired = True
 
-        # Trailing in-bonus free spin (numeric only — a BONUS landing is re-rolled to avoid a recursive
-        # bonus). The client defers the wheel until the bonus balls deplete and adds the win to the bonus.
-        if free_spin_fired:
-            segment = self._pick_free_spin_segment()
-            while segment == "BONUS":
+            # END OF THIS LEVEL: if the spin meter is full, fire the in-bonus free spin NOW — after this
+            # level's balls, but BEFORE the queued level-up's balls drop — then RESET the meter so a
+            # later level can fire it again (the free spin fires at the end of EVERY level it is full).
+            # The event is tagged with `level` so the client fires the wheel at the matching level
+            # boundary. Numeric only (re-roll a BONUS landing) to avoid a recursive bonus.
+            if spin_in_drop and spin_meter >= spin_max:
                 segment = self._pick_free_spin_segment()
-            multiplier = self._free_spin_segment_multiplier(segment)
-            free_spin_win = stake_per_ball * multiplier
-            feature_win += free_spin_win
-            events.append(
-                {
-                    "type": "freeSpinTrigger",
-                    "segment": segment,
-                    "multiplier": multiplier,
-                    "amount": free_spin_win,
-                }
-            )
+                while segment == "BONUS":
+                    segment = self._pick_free_spin_segment()
+                multiplier = self._free_spin_segment_multiplier(segment)
+                free_spin_win = stake_per_ball * multiplier
+                feature_win += free_spin_win
+                events.append(
+                    {
+                        "type": "freeSpinTrigger",
+                        "segment": segment,
+                        "multiplier": multiplier,
+                        "amount": free_spin_win,
+                        "level": cur_level,
+                    }
+                )
+                spin_meter = 0
         return events, feature_win, level
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:
@@ -231,6 +240,7 @@ class GameCalculations(Executables):
         spin_in_drop: bool = False,
         bonus_in_drop: bool = False,
         buy_entry_balls: int = 0,
+        buy_levelup_head_start: float = 0.0,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -325,8 +335,10 @@ class GameCalculations(Executables):
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
                 balls_per_drop=balls,
-                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel).
+                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel) and the
+                # tier's Fury-meter head-start (in-bonus level-up meter starting fill).
                 entry_balls_override=buy_entry_balls,
+                levelup_head_start=buy_levelup_head_start,
             )
             events.extend(bonus_events)
             feature_win += bonus_win

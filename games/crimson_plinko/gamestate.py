@@ -43,6 +43,8 @@ class GameState(GameStateOverride):
         # immediately) — the bought balls then combine with the in-bonus level-up / chain balls.
         bonus_only = bool(conditions.get("bonus_only", False))
         buy_entry_balls = max(0, int(conditions.get("buy_entry_balls", 0)))
+        # BUY BONUS Fury-meter head-start (in-bonus level-up meter starting fill, 0..1).
+        buy_levelup_head_start = max(0.0, float(conditions.get("buy_levelup_head_start", 0.0)))
 
         self.repeat = True
         while self.repeat:
@@ -98,6 +100,7 @@ class GameState(GameStateOverride):
                 spin_in_drop=spin_in_drop,
                 bonus_in_drop=bonus_in_drop,
                 buy_entry_balls=buy_entry_balls,
+                buy_levelup_head_start=buy_levelup_head_start,
             )
             total_win += feature_win
 
@@ -146,6 +149,7 @@ class GameState(GameStateOverride):
                         multiplier=event["multiplier"],
                         segment=event["segment"],
                         amount=event.get("amount", 0.0),
+                        level=int(event.get("level", 0)),
                     )
 
             # Index strata for RGS / force lookup (matches play `meta` condition keys).

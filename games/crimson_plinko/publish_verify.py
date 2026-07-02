@@ -78,20 +78,45 @@ def _nonspin_win(outcomes: list[dict]) -> float:
     return total
 
 
-def find_feature_payout_mismatches(books_json: str, *, wincap: float = 1000.0) -> list[tuple]:
+def _iter_books(books_json: str, books_jsonl: str, books_zst: str):
+    """Yield book dicts ONE at a time from the smallest available source (zst > jsonl > json).
+
+    The zst / jsonl are line-delimited so they stream with bounded memory; only the raw `.json` array
+    (no per-line structure) still has to be fully parsed. Verification uses this so it never holds every
+    book in memory at once (millions of books would OOM on a low-RAM machine)."""
+    if os.path.isfile(books_zst):
+        with open(books_zst, "rb") as f:
+            with zstd.ZstdDecompressor().stream_reader(f) as reader:
+                for line in TextIOWrapper(reader, encoding="UTF-8"):
+                    line = line.strip()
+                    if line:
+                        yield json.loads(line)
+        return
+    if os.path.isfile(books_jsonl):
+        with open(books_jsonl, encoding="UTF-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+        return
+    if os.path.isfile(books_json):
+        with open(books_json, encoding="UTF-8") as f:
+            data = json.load(f)
+        for book in (data if isinstance(data, list) else [data]):
+            yield book
+
+
+def find_feature_payout_mismatches(books, *, wincap: float = 1000.0) -> list[tuple]:
     """
     Reconstruct the on-screen total from a book's events the way the client accumulates it
     (base drop + bonus-round balls + free-spin multiply) and compare to `finalWin`.
 
     This guards the exact bug that previously caused features to be stripped: book payout
     must equal what the player watches land. Returns a list of (id, finalWin, expected).
-    """
-    if not os.path.isfile(books_json):
-        return []
-    with open(books_json, encoding="UTF-8") as f:
-        data = json.load(f)
-    books = data if isinstance(data, list) else [data]
 
+    `books` is an ITERABLE of book dicts (see `_iter_books`) — streamed, so only one book is held at a
+    time rather than the whole (multi-GB) set.
+    """
     mismatches: list[tuple] = []
     for book in books:
         events = book.get("events", [])
@@ -118,12 +143,18 @@ def find_feature_payout_mismatches(books_json: str, *, wincap: float = 1000.0) -
     return mismatches
 
 
-def write_books_jsonl_zst(books: list[dict], dest_zst: str) -> None:
-    payload = "\n".join(json.dumps(book, separators=(",", ":")) for book in books) + "\n"
+def write_books_jsonl_zst(books, dest_zst: str) -> None:
+    """STREAM-compress an iterable of book dicts to a `.jsonl.zst`, one JSON line per book.
+
+    `books` may be a list OR a generator. The previous implementation joined every book into ONE giant
+    in-memory string and then compressed it — with millions of books that string (plus its UTF-8 bytes
+    and the compressed buffer) exhausted RAM (`MemoryError`). Feeding the zstd stream writer one book at
+    a time keeps peak memory to a single book's JSON regardless of the total count."""
     compressor = zstd.ZstdCompressor()
     os.makedirs(os.path.dirname(dest_zst) or ".", exist_ok=True)
-    with open(dest_zst, "wb") as f:
-        f.write(compressor.compress(payload.encode("UTF-8")))
+    with open(dest_zst, "wb") as f, compressor.stream_writer(f) as writer:
+        for book in books:
+            writer.write((json.dumps(book, separators=(",", ":")) + "\n").encode("UTF-8"))
 
 
 def _resolve_book_payouts(
@@ -135,31 +166,45 @@ def _resolve_book_payouts(
     """
     Load book payout multipliers from simulation output.
 
-    Returns (payouts, wrote_zst). When compression runs during sim, books are already
-    at books_zst — verify only and skip rebuilding the archive.
+    Returns (payouts, wrote_zst). Picks the FRESHEST source by mtime — NOT a fixed json > jsonl > zst
+    priority. A compressed run writes the fresh books to `books_zst` (publish_files) but a STALE
+    uncompressed `books_json` from a previous run can linger in library/books; trusting the `.json`
+    first then read the stale payouts (mismatching the fresh LUT) AND `json.load`s a multi-GB stale file
+    (OOM). Using the newest file avoids both: the fresh `.zst` wins and is STREAMED. When the freshest is
+    already `books_zst`, we only verify (wrote_zst=False); otherwise we (stream-)rebuild the archive.
     """
-    if os.path.isfile(books_json):
-        with open(books_json, encoding="UTF-8") as f:
-            data = json.load(f)
-        books = data if isinstance(data, list) else [data]
-        write_books_jsonl_zst(books, books_zst)
-        return {int(b["id"]): int(b["payoutMultiplier"]) for b in books}, True
-
-    if os.path.isfile(books_jsonl):
-        book_payouts = _load_book_payouts_from_jsonl(books_jsonl)
-        write_books_jsonl_zst(
-            [json.loads(line) for line in open(books_jsonl, encoding="UTF-8") if line.strip()],
-            books_zst,
+    candidates = [
+        (os.path.getmtime(path), kind, path)
+        for path, kind in ((books_zst, "zst"), (books_jsonl, "jsonl"), (books_json, "json"))
+        if path and os.path.isfile(path)
+    ]
+    if not candidates:
+        raise FileNotFoundError(
+            f"Missing simulation books for publish sync. Expected one of: "
+            f"{books_json}, {books_jsonl}, {books_zst}. Run `make run GAME=crimson_plinko` first."
         )
+    _, kind, path = max(candidates, key=lambda c: c[0])
+
+    if kind == "zst":
+        # Already the compressed publish artifact — stream payouts, no rebuild.
+        return _load_book_payouts_from_zst(path), False
+
+    if kind == "jsonl":
+        book_payouts = _load_book_payouts_from_jsonl(path)
+        # Stream the jsonl straight into the compressor (generator, not a full list).
+        with open(path, encoding="UTF-8") as fh:
+            write_books_jsonl_zst(
+                (json.loads(line) for line in fh if line.strip()),
+                books_zst,
+            )
         return book_payouts, True
 
-    if os.path.isfile(books_zst):
-        return _load_book_payouts_from_zst(books_zst), False
-
-    raise FileNotFoundError(
-        f"Missing simulation books for publish sync. Expected one of: "
-        f"{books_json}, {books_jsonl}, {books_zst}. Run `make run GAME=crimson_plinko` first."
-    )
+    # kind == "json": full array (no line structure) — must be parsed whole, then stream-compressed.
+    with open(path, encoding="UTF-8") as f:
+        data = json.load(f)
+    books = data if isinstance(data, list) else [data]
+    write_books_jsonl_zst(books, books_zst)
+    return {int(b["id"]): int(b["payoutMultiplier"]) for b in books}, True
 
 
 def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
@@ -205,7 +250,7 @@ def sync_publish_files(gamestate, *, betmode: str = "base") -> None:
         float(gamestate.config.wincap),
     )
     feature_mismatches = find_feature_payout_mismatches(
-        books_json, wincap=float(mode_wincap)
+        _iter_books(books_json, books_jsonl, books_zst), wincap=float(mode_wincap)
     )
     if feature_mismatches:
         sample = feature_mismatches[:5]

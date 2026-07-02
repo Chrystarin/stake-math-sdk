@@ -17,21 +17,24 @@ from plinko_data import (
     BUY_BONUS_BALLS_PER_DROP_REF,
     BUY_BONUS_TIER_DEFS,
     TARGET_RTP,
+    buy_bonus_head_start,
 )
 
 ROW_COUNT = 14
 STAKE = 1.0
-N = 60_000
+N = 50_000
 
-# Candidate entry-ball counts to sweep per tier (cost is fixed to the PDF; find the entry that lands RTP
-# closest to TARGET_RTP). Keyed by tier key. Default = the tier's pinned entry (single high-n confirm).
+# Candidate entry-ball counts to sweep per tier WITH the tier's Fury-meter head-start applied (cost is
+# fixed to the PDF; find the entry that lands RTP closest to TARGET_RTP). The head-start raises EV (more
+# level-ups), so higher tiers need FEWER entry balls than the no-head-start tuning.
 CANDIDATES = {
-    "enhanced": [86],
-    "superfury": [180],
+    "enhanced": [81],
+    "premium": [113],
+    "superfury": [140, 143],
 }
 
 
-def measure(gs, entry: int, wincap: float, n: int = N):
+def measure(gs, entry: int, wincap: float, head_start: float, n: int = N):
     raw, capped, balls_total, maxwin = [], [], [], 0.0
     for _ in range(n):
         _events, win, _level = gs.simulate_bonus_round(
@@ -39,6 +42,7 @@ def measure(gs, entry: int, wincap: float, n: int = N):
             stake_per_ball=STAKE,
             balls_per_drop=BUY_BONUS_BALLS_PER_DROP_REF,
             entry_balls_override=entry,
+            levelup_head_start=head_start,
         )
         pm = win / STAKE
         raw.append(pm)
@@ -64,8 +68,9 @@ def main():
             continue
         cost = float(tier["cost"])
         wincap = float(tier["wincap"])
+        hs = buy_bonus_head_start(tier["key"])
         for entry in CANDIDATES[tier["key"]]:
-            raw, capped, mean_balls, maxpm, caphit = measure(gs, entry, wincap)
+            raw, capped, mean_balls, maxpm, caphit = measure(gs, entry, wincap, hs)
             rtp = capped / cost
             k = capped / entry
             entry_target = TARGET_RTP * cost / k

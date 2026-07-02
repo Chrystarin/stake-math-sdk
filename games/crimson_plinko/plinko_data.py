@@ -91,11 +91,16 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
+# Re-tuned for the inout-style ×1 BONUS_LEVEL_BALLS ladder (BONUS_LEVELUP_PEG_HITS=6) via the
+# WINCAP-AWARE tuner (measure_tuning_capped.py): deep-level dumps are CAPPED at WINCAP_BY_BALLS and stay
+# a rare tail (avg bonus level ≈ 2.1, wincap hit ≈0.8–1.1% of bonuses), so each mode solves to ~95.700%
+# (spread ≈ 0) while the advertised max win stays easily achievable. Re-confirm with a full `make run`
+# LUT before publishing.
 BONUS_IN_DROP_RATE: dict[int, float] = {
-    1: 0.00130,
-    10: 0.00584,
-    20: 0.01572,
-    50: 0.04630,
+    1: 0.00168,
+    10: 0.00511,
+    20: 0.01463,
+    50: 0.04461,
 }
 
 
@@ -186,19 +191,29 @@ def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:
     return list(BONUS_WHEEL_FREE_BALLS)
 
 
-# Additional free balls granted on each bonus level-up (level reached -> extra balls).
-# Level 1 entry balls come from the bonus wheel (BONUS_WHEEL_FREE_BALLS); levels 2..MAX
-# add these when the bonus meter re-fills during the round. Edit here to retune the ladder
-# (mirror the same table in apps/plinko game-logic/constants.ts `BONUS_LEVEL_BALLS`).
+# On-screen bonus level-bar values (mirror apps/plinko game-logic/constants.ts BONUS_LEVEL_LABELS).
+BONUS_LEVEL_LABELS: list[int] = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+
+# Level-up free-ball award = the reached level's bar value × BONUS_LEVEL_BALL_MULTIPLIER.
+#
+# LEVEL 1 (the entry level) gets NO ladder award — its balls come ONLY from the bonus roulette
+# (BONUS_WHEEL_FREE_BALLS) or the bought free balls (`entry_balls_override`). The multiplier applies
+# ONLY from level 2 onwards (BONUS_LEVEL_BALLS starts at key 2; `bonus_level_balls(1)` returns 0).
+#
+# MULTIPLIER = 1 → the award EQUALS the bar value (L2→2, L3→4, … L9→256). This MATCHES the SOURCE game,
+# inout's Plinko Aztec, whose bonus levels ARE 1,2,4,…,256 free balls: you climb by hitting the central
+# energy bumpers and the top level "drops up to 250–256 balls per spin", the run ending when you reach
+# the top or run out of energy. (An earlier ×10 was wrong on two counts: it doesn't match inout, and the
+# EXPONENTIAL bar means a snowball to level 9 dumps `entry + M×Σlabels` balls — ×10 → ~5,200-ball bonus
+# books that OOM'd `make run`.) At ×1 the deepest bonus is ~610 balls (under the old 20..300 ramp's ~925
+# and inout's ~250/level cap), so `make run` stays within RAM, while level 9 stays reachable (~0.9% of
+# bonuses at BONUS_LEVELUP_PEG_HITS=6). Peak book ≈ entry + M×510 balls — keep M small (re-tune via
+# measure_tuning_capped.py) so `make run` doesn't OOM.
+BONUS_LEVEL_BALL_MULTIPLIER: int = 1
+
 BONUS_LEVEL_BALLS: dict[int, int] = {
-    2: 20,
-    3: 30,
-    4: 50,
-    5: 75,
-    6: 100,
-    7: 150,
-    8: 200,
-    9: 300,
+    lvl: BONUS_LEVEL_LABELS[lvl - 1] * BONUS_LEVEL_BALL_MULTIPLIER
+    for lvl in range(2, len(BONUS_LEVEL_LABELS) + 1)
 }
 
 # Highest reachable bonus level (length of the ladder including the level-1 entry).
@@ -209,8 +224,12 @@ MAX_BONUS_LEVEL = 9
 # ≈ 0.14, ~`T/0.14` balls fund one level, so a typical ~60-ball entry usually stays low and the deep
 # levels (the up-to-250-ball dumps) are a rare jackpot — the inout "accumulate energy → unlock levels"
 # feel. RAISE to make level-ups rarer (lower bonus EV); LOWER to make them common (higher EV).
-# Bumped 12 → 15 in step with BONUS_PEG_HIT_PROB (0.14 → 0.18) so the per-level ball count is unchanged.
-BONUS_LEVELUP_PEG_HITS = 15
+# Set to 6 for the inout-style ×1 ladder: the small early awards (L2→2, L3→4 …) can't "snowball" to the
+# deep levels unless the level-up bar is easy, so 6 (≈33 balls funds one level at BONUS_PEG_HIT_PROB=0.18)
+# keeps level 9 REACHABLE (~0.9% of bonuses, avg level ≈2.1) while the small ball counts keep the deepest
+# bonus ~610 balls (RAM-safe for `make run`). (Was 15 for the old steep ladder, which self-sustained on
+# its own big counts; the ×1 ladder needs the lower bar to stay achievable.)
+BONUS_LEVELUP_PEG_HITS = 6
 
 
 def bonus_level_balls(level: int) -> int:
@@ -231,14 +250,16 @@ def bonus_level_balls(level: int) -> int:
 # TARGET_RTP. The per-tier `wincap` is the advertised max win (must be achievable ≥ 1/20M and not over-
 # clip EV below target). One published mode per tier, `buy{key}` (e.g. buystandard). Mirror in apps/plinko
 # game/config.ts + game/plinkoBetMode.ts. INITIAL entry estimates — pin via measure_tuning.py + run.py.
-# entry_balls tuned via measure_buybonus.py (n=25k) so RTP = mean(min(payout, wincap)) / cost ≈ 95.7%
-# at the fixed PDF cost. wincap set at/just below each tier's organic payout max (achievable + binds the
-# thin tail). Re-pinned by the full run.py sims (report_mode_rtp) + compliance_report.py.
+# `head_start` = the PDF "Fury Meter Head-Start": the in-bonus level-up meter STARTS this fraction of the
+# way filled (of BONUS_LEVELUP_PEG_HITS), so higher tiers reach the first level-up (chain → extra free
+# balls) sooner. This raises EV, so `entry_balls` are re-tuned DOWN to hold RTP ≈ 95.7% at the fixed PDF
+# cost. entry_balls tuned via measure_buybonus.py; wincap set at/just below each tier's organic payout max
+# (achievable + binds the thin tail). Re-pinned by the full run.py sims + compliance_report.py.
 BUY_BONUS_TIER_DEFS: list[dict] = [
-    {"key": "standard", "entry_balls": 71, "cost": 80.0, "wincap": 300.0},
-    {"key": "enhanced", "entry_balls": 86, "cost": 100.0, "wincap": 340.0},
-    {"key": "premium", "entry_balls": 125, "cost": 150.0, "wincap": 450.0},
-    {"key": "superfury", "entry_balls": 179, "cost": 250.0, "wincap": 600.0},
+    {"key": "standard", "entry_balls": 71, "cost": 80.0, "wincap": 300.0, "head_start": 0.0},
+    {"key": "enhanced", "entry_balls": 81, "cost": 100.0, "wincap": 340.0, "head_start": 0.20},
+    {"key": "premium", "entry_balls": 113, "cost": 150.0, "wincap": 450.0, "head_start": 0.40},
+    {"key": "superfury", "entry_balls": 141, "cost": 250.0, "wincap": 600.0, "head_start": 0.70},
 ]
 
 # Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
@@ -268,6 +289,12 @@ def buy_bonus_cost(tier_key: str) -> float:
 def buy_bonus_wincap(tier_key: str) -> float:
     tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
     return float(tier["wincap"]) if tier else DEFAULT_WINCAP
+
+
+def buy_bonus_head_start(tier_key: str) -> float:
+    """Fury-meter head-start fraction (0..1) for a buy tier (in-bonus level-up meter starting fill)."""
+    tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
+    return float(tier.get("head_start", 0.0)) if tier else 0.0
 
 
 def _js_round(value: float) -> int:

@@ -93,17 +93,23 @@ def bonus_round_event(
     )
 
 
-def free_spin_trigger_event(gamestate, *, multiplier: float, segment: str, amount: float = 0.0) -> None:
-    """`amount` is round drop win × segment multiplier in ×100 currency units at book stake."""
-    gamestate.book.add_event(
-        {
-            "index": len(gamestate.book.events),
-            "type": "freeSpinTrigger",
-            "multiplier": float(multiplier),
-            "segment": str(segment),
-            "amount": int(round(float(amount) * 100, 0)),
-        }
-    )
+def free_spin_trigger_event(
+    gamestate, *, multiplier: float, segment: str, amount: float = 0.0, level: int = 0
+) -> None:
+    """`amount` is round drop win × segment multiplier in ×100 currency units at book stake.
+
+    `level` (>0 for an in-bonus free spin) is the bonus level whose balls just finished — the client
+    fires the wheel at that level boundary, before the level-up. 0 for a base (non-bonus) free spin."""
+    event: dict = {
+        "index": len(gamestate.book.events),
+        "type": "freeSpinTrigger",
+        "multiplier": float(multiplier),
+        "segment": str(segment),
+        "amount": int(round(float(amount) * 100, 0)),
+    }
+    if int(level) > 0:
+        event["level"] = int(level)
+    gamestate.book.add_event(event)
 
 
 def plinko_set_total_event(gamestate) -> None:
