@@ -17,7 +17,10 @@ for balls in BALLS_PER_DROP_OPTIONS:
     smax,sstart=scaled_spin_meter_max(balls),scaled_spin_meter_start(balls)
     bmax,bstart=scaled_bonus_meter_max(balls),scaled_bonus_meter_start(balls)
     spin_in=spin_in_drop_for_balls(balls); bonus_in=bonus_in_drop_for_balls(balls)
-    N=200_000; pay=0.0; nb=0; cap=0; maxb=0
+    # Per-tier sample count: the LOW tiers fire a rare, high-variance capped bonus (tier-1 ~0.1%), so a
+    # flat 200k under-samples them and the tier-1 RTP reads wildly off (seen swinging 94.9%↔97.6%). Low
+    # tiers are cheap (few balls/drop), so give them far more samples for a trustworthy read.
+    N={1:3_000_000,10:1_200_000,20:700_000,50:350_000}.get(balls,200_000); pay=0.0; nb=0; cap=0; maxb=0
     for _ in range(N):
         force = random.random()<q
         outcomes,dw=gs.build_drop_outcomes(row_count=ROW,balls_per_drop=balls,stake_per_ball=STAKE)

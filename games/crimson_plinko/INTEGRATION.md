@@ -87,7 +87,7 @@ All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_co
 | `SPIN_METER_MAX` / `BONUS_METER_MAX` | 10 / 20 | Pocket / coin-peg hits to fill a meter |
 | `BONUS_PEG_HIT_PROB` | 0.14 | Per-ball chance to hit a bonus (coin) peg |
 | `FREE_SPIN_SEGMENTS` | `2X 0.5X 1X 5X 10X BONUS 20X 15X` | Free-spin wheel; `NX` multiplies the round drop win, `BONUS` chains into a bonus round |
-| `BONUS_WHEEL_FREE_BALLS` | `100 20 50 50 50 80 20 20` | Bonus wheel entry free balls (level 1) |
+| `BONUS_WHEEL_FREE_BALLS` | `100 90 80 70 60 50 40 30 20` | Bonus wheel entry free balls (level 1) |
 | `BONUS_LEVEL_BALLS` | `{2:20,3:30,4:50,5:75,6:100,7:150,8:200,9:300}` | Extra balls when the bonus meter re-fills during a round (level-up) |
 
 **RTP is tuned for compliance (90.0%–96.70%, cross-mode variance < 1%).** Every mode reads ~`TARGET_RTP` (95.7%, `plinko_data.py`):

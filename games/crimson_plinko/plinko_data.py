@@ -91,16 +91,18 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
-# Re-tuned for the inout-style ×1 BONUS_LEVEL_BALLS ladder (BONUS_LEVELUP_PEG_HITS=6) via the
+# Re-tuned for the REVISED bonus wheel (BONUS_WHEEL_FREE_BALLS = 20..100, avg ≈ 60 entry balls; up from
+# the old avg ≈ 48.75) on the inout-style ×1 BONUS_LEVEL_BALLS ladder (BONUS_LEVELUP_PEG_HITS=6) via the
 # WINCAP-AWARE tuner (measure_tuning_capped.py): deep-level dumps are CAPPED at WINCAP_BY_BALLS and stay
-# a rare tail (avg bonus level ≈ 2.1, wincap hit ≈0.8–1.1% of bonuses), so each mode solves to ~95.700%
-# (spread ≈ 0) while the advertised max win stays easily achievable. Re-confirm with a full `make run`
-# LUT before publishing.
+# a rare tail (avg bonus level ≈ 2.5, wincap hit ≈0.9–1.3% of bonuses), so each mode solves to ~95.700%
+# (spread ≈ 0) while the advertised max win stays easily achievable. The richer wheel raises the bonus
+# stratum EV, so the quotas dropped vs. the old wheel. Re-confirm with a full `make run` LUT before
+# publishing.
 BONUS_IN_DROP_RATE: dict[int, float] = {
-    1: 0.00168,
-    10: 0.00511,
-    20: 0.01463,
-    50: 0.04461,
+    1: 0.00101,
+    10: 0.00354,
+    20: 0.01049,
+    50: 0.03347,
 }
 
 
@@ -177,11 +179,11 @@ FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X"
 # landing is uniform. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
 FREE_SPIN_WEIGHTS: list[float] = [1, 1, 1, 1, 1, 1, 1, 1]
 
-# Bonus roulette ABSOLUTE free-ball awards — ORIGINAL values, baked into the labeled `bonus-roulette-
-# wheel.png` (8 segments, clockwise from the top marker; avg ≈ 48.75 entry balls). Tier-INDEPENDENT;
-# level-ups add more (BONUS_LEVEL_BALLS). Order MUST match the PNG (index 0 = top = 100). Mirror in
-# apps/plinko game-logic/constants.ts.
-BONUS_WHEEL_FREE_BALLS: list[int] = [100, 20, 50, 50, 50, 80, 20, 20]
+# Bonus roulette ABSOLUTE free-ball awards — REVISED values, baked into the labeled `bonus-roulette-
+# wheel-revised-values.png` (9 segments, clockwise from the top marker; avg ≈ 60 entry balls). Tier-
+# INDEPENDENT; level-ups add more (BONUS_LEVEL_BALLS). Order MUST match the PNG (index 0 = top = 100,
+# then clockwise 90, 80, 70, 60, 50, 40, 30, 20). Mirror in apps/plinko game-logic/constants.ts.
+BONUS_WHEEL_FREE_BALLS: list[int] = [100, 90, 80, 70, 60, 50, 40, 30, 20]
 
 
 def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:

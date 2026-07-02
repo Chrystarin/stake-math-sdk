@@ -36,13 +36,21 @@ def analytic_board_ev() -> float:
     return sum(math.comb(n, k) * m for k, m in enumerate(BOARD_SLOT_MULTIPLIERS)) / (2 ** n)
 
 
-def stratum_stats(gs, balls, *, force_bonus, n, wincap):
-    """Mean CAPPED payout multiple (per stake) + level/ball stats for one stratum."""
+def stratum_stats(gs, balls, *, force_bonus, n, wincap, board):
+    """Mean CAPPED payout multiple (per stake) + level/ball stats for one stratum.
+
+    `mean_pay` uses a CONTROL-VARIATE decomposition: E[min(total, wincap)] =
+    board*balls + E[min(total, wincap) - drop_win], with the base `board*balls` taken from the EXACT
+    analytic board EV instead of the sampled `drop_win`. The 1-ball board's rare 100x corner has huge
+    variance, so a plain sampled mean under-samples it and reads LOW (this once inflated the tier-1 quota
+    ~30% and pushed the mode to ~97.6% RTP — over the band). The increment `min(total,wc)-drop_win` has
+    far lower variance (0 whenever no feature fires and no cap binds), so this estimator is unbiased and
+    stable. `board` = analytic_board_ev()."""
     smax, sstart = scaled_spin_meter_max(balls), scaled_spin_meter_start(balls)
     bmax, bstart = scaled_bonus_meter_max(balls), scaled_bonus_meter_start(balls)
     spin_in = spin_in_drop_for_balls(balls)
     bonus_in = bonus_in_drop_for_balls(balls)
-    pay_sum = 0.0
+    inc_sum = 0.0
     cap_hits = 0
     lvl_sum = 0
     lvl_max = 0
@@ -58,17 +66,18 @@ def stratum_stats(gs, balls, *, force_bonus, n, wincap):
             force_bonus=force_bonus,
         )
         total = drop_win + feat_win  # payout multiple per stake (stake=1)
+        capped = total
         if total > wincap:
             cap_hits += 1
-            total = wincap
-        pay_sum += total
+            capped = wincap
+        inc_sum += capped - drop_win  # low-variance increment over the analytic base
         if blevel:
             lvl_sum += blevel
             lvl_max = max(lvl_max, blevel)
         bballs = sum(e["freeBalls"] for e in events if e["type"] == "bonusRound")
         ball_max = max(ball_max, bballs)
     return {
-        "mean_pay": pay_sum / n,
+        "mean_pay": board * balls + inc_sum / n,
         "cap_rate": cap_hits / n,
         "avg_level": lvl_sum / n,
         "max_level": lvl_max,
@@ -95,8 +104,8 @@ def main():
     for balls in BALLS_PER_DROP_OPTIONS:
         wincap = wincap_for_balls(balls)
         # Normal stratum needs many samples (feature is rare); bonus stratum is always a bonus.
-        norm = stratum_stats(gs, balls, force_bonus=False, n=120_000, wincap=wincap)
-        bon = stratum_stats(gs, balls, force_bonus=True, n=20_000, wincap=wincap)
+        norm = stratum_stats(gs, balls, force_bonus=False, n=120_000, wincap=wincap, board=board)
+        bon = stratum_stats(gs, balls, force_bonus=True, n=20_000, wincap=wincap, board=board)
         e_norm = norm["mean_pay"]
         e_bonus = bon["mean_pay"]
         need = TARGET_RTP * balls  # target payout multiple per drop
