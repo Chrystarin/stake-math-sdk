@@ -137,7 +137,11 @@ if __name__ == "__main__":
     # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
     # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — onedrop
     # most of all (its whole feature add is that bonus). Bump if the ±0.5% band/spread is noisy.
-    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 160_000}
+    # fiftydrop bumped 160k → 1.5M: its advertised 400× max-win is organically reachable but rare
+    # (~1/165k, since the 50-ball bonus tail runs to ~4800× uncapped), so 160k sims captured ~0 of the
+    # 400×-capped books (observed max stuck at 363.9). 1.5M yields ~9 expected → the 400× spike appears
+    # reliably (advertised = achievable). RTP/variance/quotas unchanged — this only samples the tail more.
+    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 1_500_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
