@@ -122,7 +122,10 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
 
 
 if __name__ == "__main__":
-    num_threads = 4
+    # RAM control: each of `num_threads` worker processes holds a batch of books in memory at once, so
+    # peak RAM ≈ num_threads × PLINKO_BATCH × avg-book-size. The escalating bonus (frequent leveling) makes
+    # books bigger, so drop PLINKO_THREADS (→2 or 1) and/or PLINKO_BATCH if `make run` OOMs the machine.
+    num_threads = max(1, int(os.getenv("PLINKO_THREADS", "4")))
     batching_size = int(os.getenv("PLINKO_BATCH", "20000"))
     # Local dev defaults to uncompressed books (.jsonl) for sync-math-books.
     # Set PLINKO_BOOKS_COMPRESSION=1 when generating Stake Engine publish payloads.
@@ -137,11 +140,12 @@ if __name__ == "__main__":
     # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
     # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — onedrop
     # most of all (its whole feature add is that bonus). Bump if the ±0.5% band/spread is noisy.
-    # fiftydrop bumped 160k → 1.5M: its advertised 400× max-win is organically reachable but rare
-    # (~1/165k, since the 50-ball bonus tail runs to ~4800× uncapped), so 160k sims captured ~0 of the
-    # 400×-capped books (observed max stuck at 363.9). 1.5M yields ~9 expected → the 400× spike appears
-    # reliably (advertised = achievable). RTP/variance/quotas unchanged — this only samples the tail more.
-    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 1_500_000}
+    # fiftydrop: was 1.5M ONLY to surface the rare 400× max-win spike (~1/165k on the old FLAT-bar bonus).
+    # The ESCALATING level-up made bonuses bigger + frequent, so tier-50 now hits the 400× cap ~1/4,900
+    # (≈33× more often) — the spike appears in ~120 books at 400k. Cut 1.5M → 400k: still converges RTP +
+    # the achievable max-win, and (with 50 balls/drop) it is BY FAR the heaviest mode for RAM, so this is
+    # the single biggest `make run` memory saving. Bump back up only if the observed fiftydrop max < 400×.
+    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 400_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
