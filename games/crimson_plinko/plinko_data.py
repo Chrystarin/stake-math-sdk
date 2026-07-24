@@ -91,18 +91,18 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
-# Re-tuned for the REVISED bonus wheel (BONUS_WHEEL_FREE_BALLS = 20..100, avg ≈ 60 entry balls; up from
-# the old avg ≈ 48.75) on the inout-style ×1 BONUS_LEVEL_BALLS ladder (BONUS_LEVELUP_PEG_HITS=6) via the
-# WINCAP-AWARE tuner (measure_tuning_capped.py): deep-level dumps are CAPPED at WINCAP_BY_BALLS and stay
-# a rare tail (avg bonus level ≈ 2.5, wincap hit ≈0.9–1.3% of bonuses), so each mode solves to ~95.700%
-# (spread ≈ 0) while the advertised max win stays easily achievable. The richer wheel raises the bonus
-# stratum EV, so the quotas dropped vs. the old wheel. Re-confirm with a full `make run` LUT before
-# publishing.
+# Re-tuned for the ESCALATING per-level level-up (`bonus_levelup_pegs`, thresholds 5,8,14,25,42,71,121,
+# 205) + the avg-50 entry wheel (BONUS_WHEEL_FREE_BALLS = 10..90), via the WINCAP-AWARE tuner
+# (measure_tuning_capped.py). Escalating level-ups make leveling FREQUENT + graduated (avg bonus level
+# ≈ 2.40, up from ≈1.27 on the old flat bar), which ≈doubled the bonus EV; the smaller entry + these
+# LOWER quotas re-solve EVERY mode to exactly 95.700% (spread 0.000%) with a positive quota on all tiers
+# and wincap-hit ≈0.6–7.5% of bonuses (advertised max win easily achievable). Re-confirm with a full
+# `make run` LUT before publishing.
 BONUS_IN_DROP_RATE: dict[int, float] = {
-    1: 0.00104,
-    10: 0.00366,
-    20: 0.01084,
-    50: 0.03557,
+    1: 0.00073,
+    10: 0.00068,
+    20: 0.00517,
+    50: 0.01943,
 }
 
 
@@ -179,11 +179,15 @@ FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X"
 # landing is uniform. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
 FREE_SPIN_WEIGHTS: list[float] = [1, 1, 1, 1, 1, 1, 1, 1]
 
-# Bonus roulette ABSOLUTE free-ball awards — REVISED values, baked into the labeled `bonus-roulette-
-# wheel-revised-values.png` (9 segments, clockwise from the top marker; avg ≈ 60 entry balls). Tier-
-# INDEPENDENT; level-ups add more (BONUS_LEVEL_BALLS). Order MUST match the PNG (index 0 = top = 100,
-# then clockwise 90, 80, 70, 60, 50, 40, 30, 20). Mirror in apps/plinko game-logic/constants.ts.
-BONUS_WHEEL_FREE_BALLS: list[int] = [100, 90, 80, 70, 60, 50, 40, 30, 20]
+# Bonus roulette ABSOLUTE entry free-ball awards (9 segments, clockwise from the top marker; avg = 50).
+# LOWERED from the old 20..100 (avg 60) to 10..90 (avg 50): the escalating per-level level-up
+# (bonus_levelup_pegs) roughly DOUBLED the bonus EV (much more frequent leveling), so a slightly smaller
+# entry keeps EVERY tier's BONUS_IN_DROP_RATE quota positive and all modes balanced at ~95.7% (at the old
+# avg-60 entry, the 10-ball tier's natural in-drop bonus alone pushed it to ~96.2% with a zero quota).
+# Tier-INDEPENDENT; level-ups add more (BONUS_LEVEL_BALLS). ⚠️ ART: the wheel PNG
+# `bonus-roulette-wheel-revised-values.png` still shows 20..100 and must be REGENERATED to 90..10
+# (index 0 = top = 90, then clockwise 80,70,60,50,40,30,20,10). Mirror in apps/plinko game-logic/constants.ts.
+BONUS_WHEEL_FREE_BALLS: list[int] = [90, 80, 70, 60, 50, 40, 30, 20, 10]
 
 
 def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:
@@ -223,19 +227,43 @@ BONUS_LEVEL_BALLS: dict[int, int] = {
 # Highest reachable bonus level (length of the ladder including the level-1 entry).
 MAX_BONUS_LEVEL = 9
 
-# In-bonus level-up: number of coin-peg hits (accumulated across the falling bonus balls) needed to
-# advance one level and unlock the next batch of free balls (BONUS_LEVEL_BALLS). With BONUS_PEG_HIT_PROB
-# ≈ 0.14, ~`T/0.14` balls fund one level, so a typical ~60-ball entry usually stays low and the deep
-# levels (the up-to-250-ball dumps) are a rare jackpot — the inout "accumulate energy → unlock levels"
-# feel. RAISE to make level-ups rarer (lower bonus EV); LOWER to make them common (higher EV).
-# Set to 15 for the ×10 ladder (BONUS_LEVEL_BALL_MULTIPLIER=10): the exponential ×10 awards
-# self-sustain the cascade, so an EASY bar (e.g. 6) runs a bonus away to level 9 (~5,100 balls) far too
-# often — non-compliant + OOMs `make run`. At 15 (≈83 balls fund one level at BONUS_PEG_HIT_PROB=0.18)
-# the base bonus (wheel entry ≤100) rarely climbs past level 1–2, so deep dumps stay a RARE jackpot
-# (avg bonus level ≈1.27, level 9 ≪0.01% of bonuses) — RAM-safe, and BONUS_IN_DROP_RATE re-solves each
-# base mode to ~95.70%. The BUY tiers set an even higher per-tier `levelup_pegs` (their fixed entry is
-# larger, so it self-sustains at a lower bar). See BUY_BONUS_TIER_DEFS.
-BONUS_LEVELUP_PEG_HITS = 15
+# In-bonus level-up: PER-LEVEL (escalating) coin-peg threshold — the number of coin-peg hits
+# (accumulated across the falling bonus balls, reset on each level-up) needed to advance FROM level L to
+# L+1 = round(BONUS_LEVELUP_BASE * BONUS_LEVELUP_GROWTH**(L-1)), clamped >= 2.
+#
+# WHY ESCALATING (not the old flat 15): the ×10 award ladder is EXPONENTIAL, so a FLAT bar is bimodal —
+# either the bonus stays shallow (~L1-2) or, once an award is big enough to self-sustain, it runs away to
+# L9 (~5,100 balls: RTP blow-up + OOM). A flat bar low enough for FREQUENT level-ups therefore always
+# ran away. An escalating bar whose growth ≈ the award growth (~1.7 vs ×2) makes each level ~equally
+# hard RELATIVE to its award, so leveling up is FREQUENT and graduated at low levels but progressively
+# HARDER at higher ones, and the runaway never ignites. Measured (sweep_escalation.py, BASE=5 GROWTH=1.7
+# → thresholds 5,8,14,25,42,71,121,205): L2≈86% L3≈59% L4≈22% L5≈1.7% L6≈0.06% … L9≈0.007%; 99.9% of
+# bonuses ≤400 balls (RAM-safe like the old flat bar) yet the FULL ×10 ladder stays reachable as a rare
+# escalating jackpot. The awarded free balls per level (BONUS_LEVEL_BALLS) are UNCHANGED. Bonus EV about
+# doubles (avg pay ~66→~123), so BONUS_IN_DROP_RATE is re-solved DOWN to hold each base mode at ~95.7%.
+# Tune the frequency via BASE (lower = more frequent early levels) and the deep-tail via GROWTH (lower =
+# deeper jackpots reachable, but heavier RAM/variance). Mirror in apps/plinko game-logic/constants.ts.
+BONUS_LEVELUP_BASE = 5
+BONUS_LEVELUP_GROWTH = 1.7
+
+# Threshold to LEAVE each level L (1 .. MAX_BONUS_LEVEL-1). Precomputed dict (single source of truth).
+BONUS_LEVELUP_PEG_HITS_BY_LEVEL: dict[int, int] = {
+    lvl: max(2, round(BONUS_LEVELUP_BASE * (BONUS_LEVELUP_GROWTH ** (lvl - 1))))
+    for lvl in range(1, MAX_BONUS_LEVEL)
+}
+
+
+def bonus_levelup_pegs(level: int) -> int:
+    """Coin-peg hits needed to advance FROM `level` to `level+1` (escalating per-level threshold).
+    Clamped to the level-1 value below the ladder and to the top step at/above MAX_BONUS_LEVEL."""
+    lvl = max(1, min(int(level), MAX_BONUS_LEVEL - 1))
+    return int(BONUS_LEVELUP_PEG_HITS_BY_LEVEL[lvl])
+
+
+# Backward-compat flat reference (= the level-1 threshold). Kept because a few dev tools still read it;
+# the live math uses the per-level `bonus_levelup_pegs()` above. NOT the buy threshold (buys keep their
+# own flat `levelup_pegs` override).
+BONUS_LEVELUP_PEG_HITS = BONUS_LEVELUP_PEG_HITS_BY_LEVEL[1]
 
 
 def bonus_level_balls(level: int) -> int:

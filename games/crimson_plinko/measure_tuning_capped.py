@@ -86,18 +86,19 @@ def stratum_stats(gs, balls, *, force_bonus, n, wincap, board):
 
 
 def main():
+    _ = gc_mod  # kept imported for parity with the live math module
+    import plinko_data as _pd
+    from plinko_data import BONUS_LEVELUP_PEG_HITS_BY_LEVEL
+    # Optional arg 1 = entry-ball scale: shrink the bonus-wheel entry awards to test smaller initial
+    # balls (the escalation ~doubled bonus EV; a smaller entry lets every tier keep a positive quota).
     if len(sys.argv) > 1:
-        gc_mod.BONUS_LEVELUP_PEG_HITS = int(sys.argv[1])
-    if len(sys.argv) > 2:
-        import plinko_data as _pd
-        mult = int(sys.argv[2])
-        labels = [1, 2, 4, 8, 16, 32, 64, 128, 256]
-        _pd.BONUS_LEVEL_BALLS = {l: labels[l - 1] * mult for l in range(2, len(labels) + 1)}
-        print(f"(ladder multiplier = {mult}: L9 award = {labels[8] * mult})")
-    threshold = gc_mod.BONUS_LEVELUP_PEG_HITS
+        scale = float(sys.argv[1])
+        _pd.BONUS_WHEEL_FREE_BALLS = [max(1, round(v * scale)) for v in _pd.BONUS_WHEEL_FREE_BALLS]
+        print(f"(entry scale {scale} -> wheel {_pd.BONUS_WHEEL_FREE_BALLS})")
+    threshold = list(BONUS_LEVELUP_PEG_HITS_BY_LEVEL.values())  # escalating per-level thresholds
     gs = GameState(GameConfig())
     board = analytic_board_ev()
-    print(f"board_EV/ball = {board:.5f}   TARGET_RTP = {TARGET_RTP}   LEVELUP_PEG_HITS = {threshold}\n")
+    print(f"board_EV/ball = {board:.5f}   TARGET_RTP = {TARGET_RTP}   LEVELUP_PEGS(per level) = {threshold}\n")
     print(f"{'tier':>4} {'wincap':>7} {'E_norm':>8} {'E_bonus':>9} {'bcapHit':>8} {'bAvgLv':>7} {'bMaxLv':>7} {'quota':>9} {'modeRTP':>9}")
     solved = {}
     rtps = []

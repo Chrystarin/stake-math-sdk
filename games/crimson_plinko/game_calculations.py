@@ -7,7 +7,6 @@ the client animates exactly these outcomes and never rolls its own dice.
 import random as py_random
 
 from plinko_data import (
-    BONUS_LEVELUP_PEG_HITS,
     BONUS_METER_MAX,
     BONUS_PEG_HIT_PROB,
     FREE_SPIN_SEGMENTS,
@@ -15,6 +14,7 @@ from plinko_data import (
     MAX_BONUS_LEVEL,
     SPIN_METER_MAX,
     bonus_level_balls,
+    bonus_levelup_pegs,
     bonus_wheel_free_balls,
     coefficients_for,
     scaled_spin_meter_max,
@@ -142,27 +142,30 @@ class GameCalculations(Executables):
             entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        # BUY BONUS may raise the level-up peg threshold (buy-only, via levelup_pegs_override): rarer
-        # level-ups tame the snowball so the FIXED entry-ball count is a smooth, precise RTP lever
-        # (a natural/earned bonus passes 0 here and keeps the global BONUS_LEVELUP_PEG_HITS).
-        levelup_max = (
-            int(levelup_pegs_override)
-            if levelup_pegs_override and levelup_pegs_override > 0
-            else BONUS_LEVELUP_PEG_HITS
-        )
+        # Level-up peg threshold. EARNED bonus: PER-LEVEL escalating (`bonus_levelup_pegs`) — frequent at
+        # low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). BUY bonus:
+        # a FLAT per-tier override (`levelup_pegs_override`) so the fixed entry stays a precise RTP lever.
+        buy_flat = int(levelup_pegs_override) if levelup_pegs_override and levelup_pegs_override > 0 else 0
+
+        def threshold_for(lvl: int) -> int:
+            return buy_flat if buy_flat > 0 else bonus_levelup_pegs(lvl)
+
         spin_max = scaled_spin_meter_max(balls_per_drop)
         spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
         level = 1
+        first_max = threshold_for(1)
         # BUY BONUS "Fury Meter Head-Start": the in-bonus level-up meter starts this fraction filled, so a
         # bought higher tier reaches its first level-up (chain → extra free balls) sooner. Applies ONCE (to
-        # level 1); the meter resets to 0 on each level-up below. Clamp below `levelup_max` so it can't
+        # level 1); the meter resets to 0 on each level-up below. Clamp below `first_max` so it can't
         # auto-fire a level before any ball drops.
         head_start = max(0.0, min(1.0, float(levelup_head_start)))
-        meter_start = min(levelup_max - 1, int(round(head_start * levelup_max))) if levelup_max > 0 else 0
+        meter_start = min(first_max - 1, int(round(head_start * first_max))) if first_max > 0 else 0
         meter = meter_start
         spin_meter = 0
-        # One reset event → tells the client the in-bonus meter max + its starting fill (head-start).
-        events.append({"type": "bonusMeter", "value": meter_start, "level": level, "max": levelup_max})
+        # One reset event → tells the client the in-bonus meter max + its starting fill (head-start). The
+        # level-1 threshold seeds the bar; each `bonusRound` below carries its own level's `levelupPegs`
+        # so the client re-sizes the bar as the escalating threshold changes on every level-up.
+        events.append({"type": "bonusMeter", "value": meter_start, "level": level, "max": first_max})
         pending: list[tuple[int, int]] = [(1, entry_balls)]
         while pending:
             cur_level, batch_balls = pending.pop(0)
@@ -179,6 +182,9 @@ class GameCalculations(Executables):
                     "outcomes": outcomes,
                     "level": cur_level,
                     "ballsPlayed": 0,
+                    # Pegs to LEAVE this level (escalating) — the client sizes the energy bar / fires the
+                    # combine-level-up at this threshold while these balls drop.
+                    "levelupPegs": threshold_for(cur_level),
                 }
             )
             # Walk this batch's balls: coin pegs fill the energy meter → queue a level-up; spin-pocket
@@ -186,7 +192,7 @@ class GameCalculations(Executables):
             for outcome in outcomes:
                 if outcome.get("hitBonusPeg"):
                     meter += 1
-                    if meter >= levelup_max and level < MAX_BONUS_LEVEL:
+                    if level < MAX_BONUS_LEVEL and meter >= threshold_for(level):
                         meter = 0
                         level += 1
                         extra = bonus_level_balls(level)
