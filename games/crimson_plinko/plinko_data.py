@@ -24,12 +24,28 @@ import math
 # bonus_add + free_spin_add ≈ TARGET_RTP. Mirror in apps/plinko game-logic/boardMultipliers.ts.
 BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.2, 0, 0.2, 0.4, 1.5, 5, 20, 50, 100]
 
+# 1-BALL BOARD (onedrop only). That tier is FEATURE-FREE — no free spin, no bonus (see
+# BONUS_IN_DROP_RATE) — so the centre pocket, which exists only to fill the free-spin meter, would be a
+# dead 0× slot hit ~20.9% of the time, leaving onedrop at the bare board EV (~89.6%): BELOW the 90.00%
+# compliance floor. The 1-ball board therefore pays the CENTRE 0.1× and lifts the two pockets either
+# side 0.2× → 0.3×, funding the tier to ~95.40% (other modes ~95.70%, so cross-mode spread ≈0.30%).
+# Nothing else moves and the per-tier wincap (200×) is unchanged.
+# ⚠️ The centre is NOT flagged `hitSpinSlot` on this tier (there is no spin meter to feed), so its
+# multiplier is paid normally. Mirror in apps/plinko game-logic/boardMultipliers.ts.
+ONE_BALL_BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.3, 0.1, 0.3, 0.4, 1.5, 5, 20, 50, 100]
+
 # Serialized on plinkoDrop.difficulty for RGS / published math compatibility.
 DEFAULT_VARIANT_ID = 0
 
 DEFAULT_SLOT_MULTIPLIERS = list(BOARD_SLOT_MULTIPLIERS)
 
 COEFFICIENT_SETS: list[list[float]] = [list(DEFAULT_SLOT_MULTIPLIERS)] * 13
+
+# Per-balls-per-drop board override. Only tiers listed here differ from COEFFICIENT_SETS; every other
+# tier (and every buy-bonus mode) keeps the shared board.
+COEFFICIENT_SETS_BY_BALLS: dict[int, list[list[float]]] = {
+    1: [list(ONE_BALL_BOARD_SLOT_MULTIPLIERS)] * 13,
+}
 
 ROW_COUNT_OPTIONS = (10, 14, 20)
 BALLS_PER_DROP_OPTIONS = (1, 10, 20, 50)
@@ -68,7 +84,11 @@ TARGET_RTP = 0.957
 # wincap_for_balls(balls), and src/state/run_sims.py sets gamestate.config.wincap = bm.get_wincap() before
 # each mode's sims, so game_override.update_final_win caps the per-ball payout multiplier at this value.
 WINCAP_BY_BALLS: dict[int, float] = {
-    1: 200.0,
+    # 1-ball is FEATURE-FREE, so its only payout is the pocket the single ball lands in: the advertised
+    # max IS the board's top pocket, 100× (hit 2/16384 ≈ 1/8,192 — far above the 1/20,000,000 floor).
+    # It was 200× while the folded bonus could still fire here; that is now unreachable, so it must not
+    # be advertised. Keep this in sync with `ONE_BALL_BOARD_SLOT_MULTIPLIERS`' top value.
+    1: 100.0,
     10: 250.0,
     20: 300.0,
     50: 400.0,
@@ -85,24 +105,34 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # OPTION A (per-drop meter trigger): the bonus fires IN-DROP when the PER-DROP bonus meter
 # (BONUS_METER_TIER) fills from this drop's own coin-peg hits — NOT a cross-bet meter (statelessness:
 # each bet is independent). This `BONUS_IN_DROP_RATE` is now only a small `force_bonus` QUOTA used to
-# (a) give the 1-ball tier its bonus — 1-ball can't meter-fire (one ball ⇒ at most one coin-peg hit),
-# so it MUST come from a quota or onedrop sits ~6% below the others and fails the cross-mode band; and
-# (b) FINE-TUNE the higher tiers to exactly TARGET_RTP, since the meter fire rate is DISCRETE
+# FINE-TUNE the higher tiers to exactly TARGET_RTP, since the meter fire rate is DISCRETE
 # (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
 # book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
+#
+# ⚠️ THE 1-BALL TIER IS FEATURE-FREE (rate 0.0, and `game_config.py` omits its bonus stratum entirely —
+# `Distribution` asserts quota > 0, so a 0 rate MUST mean "no distribution", not "quota 0"). onedrop can
+# neither meter-fire (one ball ⇒ at most one coin-peg hit) nor quota-fire, and `spin_in_drop` is off, so
+# an `onedrop` book can NEVER carry bonusRoulette / bonusRound / freeSpinTrigger events. The client
+# enforces the same rule independently (`isSingleBallMode` in apps/plinko gameOrchestrator.ts).
+# CONSEQUENCE: onedrop RTP = the bare board EV (~89.6%), BELOW the 90.00% floor — the tier needs its own
+# funding (e.g. a 1-ball-only board table) before publishing. Re-check with measure_tuning_capped.py.
 # Re-tuned for the ESCALATING per-level level-up (`bonus_levelup_pegs`, thresholds 5,8,14,25,42,71,121,
-# 205) + the avg-50 entry wheel (BONUS_WHEEL_FREE_BALLS = 10..90), via the WINCAP-AWARE tuner
+# 205) + the avg-60 entry wheel (BONUS_WHEEL_FREE_BALLS = 20..100), via the WINCAP-AWARE tuner
 # (measure_tuning_capped.py). Escalating level-ups make leveling FREQUENT + graduated (avg bonus level
-# ≈ 2.40, up from ≈1.27 on the old flat bar), which ≈doubled the bonus EV; the smaller entry + these
-# LOWER quotas re-solve EVERY mode to exactly 95.700% (spread 0.000%) with a positive quota on all tiers
-# and wincap-hit ≈0.6–7.5% of bonuses (advertised max win easily achievable). Re-confirm with a full
-# `make run` LUT before publishing.
+# ≈ 2.69, up from ≈1.27 on the old flat bar), which ≈doubled the bonus EV.
+# ⚠️ The entry wheel was RAISED back 10..90 → 20..100 (avg 50 → 60) so the award always matches the
+# number painted on the wheel art (QA 2026-07-27: landed on 80, won 70). That extra entry EV alone puts
+# the 10-ball tier at 96.198% on its NATURAL meter fire rate — i.e. with a ZERO quota, so the quota lever
+# bottoms out and CANNOT pull it back to target. The 10-ball `BONUS_METER_TIER` max was therefore raised
+# 6 → 7 (rarer natural fire) to reopen headroom; with that, these quotas re-solve tiers 10/20/50 to
+# exactly 95.700% (spread 0.000%) with wincap-hit ≈1.4–9.5% of bonuses (advertised max win easily
+# achievable). Re-confirm with a full `make run` LUT before publishing.
 BONUS_IN_DROP_RATE: dict[int, float] = {
-    1: 0.00073,
-    10: 0.00068,
-    20: 0.00517,
-    50: 0.01943,
+    1: 0.0,  # FEATURE-FREE tier: no bonus stratum is published for onedrop at all.
+    10: 0.00283,
+    20: 0.00253,
+    50: 0.01350,
 }
 
 
@@ -114,9 +144,12 @@ def row_tier_index(row_count: int) -> int:
     return max(0, min(row_count - 8, 12))
 
 
-def coefficients_for(row_count: int) -> list[float]:
+def coefficients_for(row_count: int, balls_per_drop: int = 0) -> list[float]:
+    """Slot multipliers for a row count, on the board that `balls_per_drop` tier plays. Tiers without an
+    override (everything but 1-ball, plus the buy modes) get the shared COEFFICIENT_SETS board."""
     tier = row_tier_index(row_count)
-    return list(COEFFICIENT_SETS[tier])
+    sets = COEFFICIENT_SETS_BY_BALLS.get(int(balls_per_drop), COEFFICIENT_SETS)
+    return list(sets[tier])
 
 
 def spin_slot_index(num_slots: int) -> int:
@@ -137,16 +170,19 @@ BONUS_METER_MAX = 20
 # within one drop (a drop yields ~`balls × BONUS_PEG_HIT_PROB` hits) AND rare enough (~0.4–0.5% so a big
 # ~58× FREE bonus stays under the 96.70% cap). `max` scales per tier (more balls ⇒ more hits ⇒ a higher
 # bar), like the spin meter's 6/10/21. The 1-ball tier is OMITTED — one ball can add at most 1 to the
-# meter, so it can't meter-fire a rare bonus; its (cosmetic) meter never triggers and its bonus comes
-# from the BONUS_IN_DROP_RATE quota instead. Tune `max` (+ quotas) via measure_tuning.
+# meter, so it can't meter-fire a rare bonus; its (cosmetic) meter never triggers, and it has NO quota
+# either (BONUS_IN_DROP_RATE[1] = 0), so onedrop is fully feature-free. Tune `max` via measure_tuning.
+# ⚠️ 10-ball `max` RAISED 6 → 7 when the entry wheel went back to 20..100 (avg 60): at max 6 the natural
+# fire rate alone lands that tier on 96.198%, above TARGET_RTP with a zero quota and nothing left to tune.
+# Mirror in apps/plinko game-logic/constants.ts BONUS_METER_TIER.
 BONUS_METER_TIER: dict[int, dict[str, float]] = {
-    10: {"max": 6, "start_ratio": 0.0},
+    10: {"max": 7, "start_ratio": 0.0},
     20: {"max": 9, "start_ratio": 0.0},
     50: {"max": 17, "start_ratio": 0.0},
 }
 
 # Cosmetic bonus-meter for the 1-ball tier (and any tier without a BONUS_METER_TIER entry): it fills
-# visually but NEVER fires (the 1-ball bonus is quota-driven). Max only; start is 0.
+# visually but NEVER fires (the 1-ball tier has no bonus at all). Max only; start is 0.
 BONUS_METER_COSMETIC_MAX = 20
 
 # Per-drop FREE-SPIN meter, per balls-per-drop tier. The meter resets every round to
@@ -179,15 +215,17 @@ FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X"
 # landing is uniform. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
 FREE_SPIN_WEIGHTS: list[float] = [1, 1, 1, 1, 1, 1, 1, 1]
 
-# Bonus roulette ABSOLUTE entry free-ball awards (9 segments, clockwise from the top marker; avg = 50).
-# LOWERED from the old 20..100 (avg 60) to 10..90 (avg 50): the escalating per-level level-up
-# (bonus_levelup_pegs) roughly DOUBLED the bonus EV (much more frequent leveling), so a slightly smaller
-# entry keeps EVERY tier's BONUS_IN_DROP_RATE quota positive and all modes balanced at ~95.7% (at the old
-# avg-60 entry, the 10-ball tier's natural in-drop bonus alone pushed it to ~96.2% with a zero quota).
-# Tier-INDEPENDENT; level-ups add more (BONUS_LEVEL_BALLS). ⚠️ ART: the wheel PNG
-# `bonus-roulette-wheel-revised-values.png` still shows 20..100 and must be REGENERATED to 90..10
-# (index 0 = top = 90, then clockwise 80,70,60,50,40,30,20,10). Mirror in apps/plinko game-logic/constants.ts.
-BONUS_WHEEL_FREE_BALLS: list[int] = [90, 80, 70, 60, 50, 40, 30, 20, 10]
+# Bonus roulette ABSOLUTE entry free-ball awards (9 segments, clockwise from the top marker; avg = 60).
+# THE ART IS THE SOURCE OF TRUTH: these are exactly the numbers painted on the wheel PNG, in wedge order
+# (index 0 = the wedge parked under the pointer = 100, then clockwise 90,80,...,20). The player must be
+# awarded the number they watched the wheel land on, so DO NOT change this list without repainting the
+# art to match — a 2026-07-24 change to 10..90 left the art at 20..100 and every spin paid 10 less than
+# it showed (QA 2026-07-27: "landed on 80, won 70").
+# Tier-INDEPENDENT; level-ups add more (BONUS_LEVEL_BALLS). The avg-60 entry costs RTP headroom — see
+# BONUS_IN_DROP_RATE / BONUS_METER_TIER above, where the 10-ball meter max is raised 6 → 7 to pay for it.
+# Mirror in apps/plinko game-logic/constants.ts (BONUS_WHEEL_FREE_BALLS + BonusRoulette.svelte
+# ART_SLOT_FREE_BALLS, which must stay in this same wedge order).
+BONUS_WHEEL_FREE_BALLS: list[int] = [100, 90, 80, 70, 60, 50, 40, 30, 20]
 
 
 def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:
@@ -353,10 +391,47 @@ def spin_in_drop_for_balls(balls_per_drop: int) -> bool:
     return int(balls_per_drop) in SPIN_METER_TIER
 
 
+def spin_pocket_active_for_balls(balls_per_drop: int) -> bool:
+    """True where the centre pocket is the SPIN pocket (fills the free-spin meter, pays the board's 0×).
+    False on the 1-ball tier, which has no free-spin meter — there the centre is an ordinary paying
+    pocket (ONE_BALL_BOARD_SLOT_MULTIPLIERS) and balls landing in it are NOT flagged `hitSpinSlot`."""
+    return spin_in_drop_for_balls(balls_per_drop)
+
+
 def bonus_in_drop_for_balls(balls_per_drop: int) -> bool:
     """True for tiers whose PER-DROP bonus meter can fire the bonus in-drop (10/20/50). False for 1-ball
-    (one ball can't fill the meter — its bonus comes from the BONUS_IN_DROP_RATE quota)."""
+    (one ball can't fill the meter, and it has no quota either — see `bonus_possible_for_balls`)."""
     return int(balls_per_drop) in BONUS_METER_TIER
+
+
+def bonus_possible_for_balls(balls_per_drop: int) -> bool:
+    """True when a BASE book for this tier can contain a bonus at all — either the per-drop meter can
+    fire it (`bonus_in_drop_for_balls`) or the `force_bonus` quota can (`bonus_in_drop_rate` > 0).
+
+    False ONLY for the feature-free 1-ball tier, whose books must never carry bonusRoulette /
+    bonusRound events. `game_config.py` uses this to omit the bonus stratum for that tier entirely."""
+    return bonus_in_drop_for_balls(balls_per_drop) or bonus_in_drop_rate(balls_per_drop) > 0.0
+
+
+def board_ev_per_ball(balls_per_drop: int, row_count: int = 14) -> float:
+    """Analytic EV per ball of the board this tier plays (fair binomial peg walk, no features).
+
+    Assumes the canonical `num_slots == row_count + 1` board (15 slots / 14 rows), where
+    `sample_rate_index` maps the peg walk 1:1 onto the pockets."""
+    coeffs = coefficients_for(row_count, balls_per_drop)
+    if len(coeffs) != row_count + 1:
+        return 0.0
+    return sum(math.comb(row_count, k) * m for k, m in enumerate(coeffs)) / (2 ** row_count)
+
+
+def declared_rtp_for_balls(balls_per_drop: int) -> float:
+    """Declared RTP for a tier's bet mode. Feature-bearing tiers are tuned to TARGET_RTP by the bonus
+    quota; a FEATURE-FREE tier (1-ball: no bonus, no free spin) returns EXACTLY its board EV, since the
+    board is all it pays — publishing TARGET_RTP there would overstate it."""
+    balls = int(balls_per_drop)
+    if bonus_possible_for_balls(balls) or spin_in_drop_for_balls(balls):
+        return TARGET_RTP
+    return round(board_ev_per_ball(balls), 5)
 
 
 def scaled_spin_meter_max(balls_per_drop: int) -> int:

@@ -19,6 +19,7 @@ from plinko_data import (
     BOARD_SLOT_MULTIPLIERS,
     TARGET_RTP,
     bonus_in_drop_for_balls,
+    coefficients_for,
     scaled_bonus_meter_max,
     scaled_bonus_meter_start,
     scaled_spin_meter_max,
@@ -31,9 +32,11 @@ ROW_COUNT = 14
 STAKE = 1.0
 
 
-def analytic_board_ev() -> float:
+def analytic_board_ev(balls_per_drop: int = 0) -> float:
+    """EV per ball of the board this tier plays (1-ball has its own table — see COEFFICIENT_SETS_BY_BALLS)."""
     n = 14
-    return sum(math.comb(n, k) * m for k, m in enumerate(BOARD_SLOT_MULTIPLIERS)) / (2 ** n)
+    board = coefficients_for(n, balls_per_drop) if balls_per_drop else list(BOARD_SLOT_MULTIPLIERS)
+    return sum(math.comb(n, k) * m for k, m in enumerate(board)) / (2 ** n)
 
 
 def stratum_stats(gs, balls, *, force_bonus, n, wincap, board):
@@ -97,13 +100,16 @@ def main():
         print(f"(entry scale {scale} -> wheel {_pd.BONUS_WHEEL_FREE_BALLS})")
     threshold = list(BONUS_LEVELUP_PEG_HITS_BY_LEVEL.values())  # escalating per-level thresholds
     gs = GameState(GameConfig())
-    board = analytic_board_ev()
-    print(f"board_EV/ball = {board:.5f}   TARGET_RTP = {TARGET_RTP}   LEVELUP_PEGS(per level) = {threshold}\n")
+    print(
+        f"board_EV/ball = {analytic_board_ev():.5f} (1-ball board {analytic_board_ev(1):.5f})   "
+        f"TARGET_RTP = {TARGET_RTP}   LEVELUP_PEGS(per level) = {threshold}\n"
+    )
     print(f"{'tier':>4} {'wincap':>7} {'E_norm':>8} {'E_bonus':>9} {'bcapHit':>8} {'bAvgLv':>7} {'bMaxLv':>7} {'quota':>9} {'modeRTP':>9}")
     solved = {}
     rtps = []
     for balls in BALLS_PER_DROP_OPTIONS:
         wincap = wincap_for_balls(balls)
+        board = analytic_board_ev(balls)  # per-tier board (1-ball has its own)
         # Normal stratum needs many samples (feature is rare); bonus stratum is always a bonus.
         norm = stratum_stats(gs, balls, force_bonus=False, n=120_000, wincap=wincap, board=board)
         bon = stratum_stats(gs, balls, force_bonus=True, n=20_000, wincap=wincap, board=board)

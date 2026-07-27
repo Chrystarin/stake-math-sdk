@@ -118,7 +118,9 @@ class GameState(GameStateOverride):
                 row_count=row_count,
                 balls_per_drop=balls_per_drop,
                 stake_per_ball=stake_per_ball,
-                coefficients=coefficients_for(row_count),
+                # The board is per-tier (1-ball has its own table — see COEFFICIENT_SETS_BY_BALLS), so the
+                # book publishes the set this drop actually paid from.
+                coefficients=coefficients_for(row_count, balls_per_drop),
                 spin_meter_max=spin_meter_max,
                 bonus_meter_max=bonus_meter_max,
                 spin_meter_start=spin_meter_at_bet_start,

@@ -19,6 +19,7 @@ from plinko_data import (
     BONUS_PEG_HIT_PROB,
     BONUS_WHEEL_FREE_BALLS,
     COEFFICIENT_SETS,
+    COEFFICIENT_SETS_BY_BALLS,
     FREE_SPIN_SEGMENTS,
     FREE_SPIN_WEIGHTS,
     SPIN_METER_MAX,
@@ -85,6 +86,12 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     with open(path, encoding="UTF-8") as f:
         fe = json.load(f)
     fe["coefficientSets"] = COEFFICIENT_SETS
+    # Per-balls-per-drop board override (only tiers that differ from `coefficientSets` are listed). The
+    # 1-ball tier is feature-free, so its centre pocket is an ordinary paying slot instead of the 0× spin
+    # pocket. Mirror in apps/plinko game-logic/boardMultipliers.ts BOARD_SLOT_MULTIPLIERS_BY_BALLS.
+    fe["coefficientSetsByBalls"] = {
+        str(balls): sets for balls, sets in COEFFICIENT_SETS_BY_BALLS.items()
+    }
     fe["minBet"] = gamestate.config.min_bet
     fe["maxBet"] = gamestate.config.max_bet
     fe["spinMeterMax"] = SPIN_METER_MAX

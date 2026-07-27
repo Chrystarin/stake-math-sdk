@@ -152,6 +152,14 @@ Stake Engine selects books by **`/wallet/play` `mode`**, not play `meta` alone. 
 | 20 | `twentydrop` | `basegame_balls_20` |
 | 50 | `fiftydrop` | `basegame_balls_50` |
 
+**`onedrop` is FEATURE-FREE.** It is the only mode with a single distribution: `spin_in_drop` and
+`bonus_in_drop` are off and its `BONUS_IN_DROP_RATE` is 0, so `game_config.py` omits the
+`basegame_bonus_balls_1` stratum entirely (`Distribution` asserts `quota > 0`). An `onedrop` book can
+never contain `bonusRoulette` / `bonusRound` / `freeSpinTrigger`, and the client enforces the same rule
+independently (`isSingleBallMode` in `apps/plinko/src/game/gameOrchestrator.ts`). Because nothing but the
+board pays there, that tier plays its own board (`COEFFICIENT_SETS_BY_BALLS[1]`: center 0.1×, the two
+pockets either side 0.3×) for an RTP of ~95.4%, and its advertised max win is the top pocket, 100×.
+
 Each mode's LUT also contains the meter-start strata (`spin_meter_full_balls_10`, `bonus_meter_full_balls_10`, …) — the `basegame_balls_X` row above is just the zero-meter stratum.
 
 The web client sets `stateBet.activeBetModeKey` from the UI tier before each play (`plinkoBetMode.ts`).

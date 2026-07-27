@@ -19,6 +19,7 @@ from plinko_data import (
     coefficients_for,
     scaled_spin_meter_max,
     spin_in_drop_for_balls,
+    spin_pocket_active_for_balls,
     spin_slot_index,
 )
 from src.executables.executables import Executables
@@ -46,19 +47,29 @@ class GameCalculations(Executables):
         row_count: int,
         balls_per_drop: int,
         stake_per_ball: float,
+        tier_balls_per_drop: int = 0,
     ) -> tuple[list[dict], float]:
-        """Sample `balls_per_drop` balls; each carries pocket + feature flags."""
-        coeffs = coefficients_for(row_count)
+        """Sample `balls_per_drop` balls; each carries pocket + feature flags.
+
+        `tier_balls_per_drop` is the PLAYER'S tier, which selects the board (1-ball has its own table)
+        and whether the centre is the spin pocket. It defaults to `balls_per_drop` — correct for a paid
+        drop, but a bonus batch must pass the real tier explicitly (its ball count is not a tier)."""
+        tier = int(tier_balls_per_drop or balls_per_drop)
+        coeffs = coefficients_for(row_count, tier)
         if not coeffs:
             return [], 0.0
 
         outcomes: list[dict] = []
         total_win = 0.0
         num_slots = len(coeffs)
+        spin_pocket = spin_pocket_active_for_balls(tier)
         for _ in range(balls_per_drop):
             rate_index = self.sample_rate_index(row_count, num_slots)
-            hit_spin_slot = self.is_spin_slot(rate_index, num_slots)
-            multiplier = 0.0 if hit_spin_slot else coeffs[rate_index]
+            # `hitSpinSlot` means "this ball fed the free-spin meter" — only on tiers that HAVE one. The
+            # payout always comes from the board: the shared board pays 0 at the centre anyway, while the
+            # 1-ball board pays its centre value (that tier has no spin meter to feed).
+            hit_spin_slot = spin_pocket and self.is_spin_slot(rate_index, num_slots)
+            multiplier = coeffs[rate_index]
             hit_bonus_peg = py_random.random() < BONUS_PEG_HIT_PROB
             total_win += stake_per_ball * multiplier
             outcomes.append(
@@ -93,12 +104,11 @@ class GameCalculations(Executables):
             outcomes[idx]["hitBonusPeg"] = True
 
     def _drop_win_from_outcomes(self, outcomes: list[dict], stake_per_ball: float) -> float:
-        """Sum slot payouts for a drop (spin-pocket balls pay 0)."""
+        """Sum slot payouts for a drop. Each ball's `multiplier` already comes from its tier's board, so
+        spin-pocket balls carry 0 on the tiers that have a spin meter and the 1-ball centre pays."""
         stake = max(0.0, float(stake_per_ball))
         total = 0.0
         for outcome in outcomes:
-            if outcome.get("hitSpinSlot"):
-                continue
             total += stake * float(outcome.get("multiplier", 0) or 0)
         return total
 
@@ -173,6 +183,8 @@ class GameCalculations(Executables):
                 row_count=row_count,
                 balls_per_drop=batch_balls,
                 stake_per_ball=stake_per_ball,
+                # Bonus balls play the PLAYER'S tier board, not a board keyed by the batch size.
+                tier_balls_per_drop=balls_per_drop,
             )
             feature_win += batch_win
             events.append(
