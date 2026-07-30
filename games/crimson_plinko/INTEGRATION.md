@@ -67,7 +67,7 @@ Imports the first N books from math `library/books/books_base.jsonl` into `src/s
 | `plinkoDrop` | Multi-ball drop; `outcomes[]` includes `rateIndex`, `hitBonusPeg`, `hitSpinSlot`; optional `spinMeterStart`, `bonusMeterStart`, `bonusLevelStart` for session carry-over |
 | `bonusMeter` | Bonus meter value after a coin-peg hit (`value`, `level`) |
 | `bonusRoulette` | Bonus wheel award (`freeBalls`) — presentation before `bonusRound` |
-| `bonusRound` | Authoritative bonus balls for one level (`outcomes[]`, `level`, optional `ballsPlayed` for resume). Nested level-ups emit **one `bonusRound` per level** with increasing `level`; the client shows a level-up between them |
+| `bonusRound` | Authoritative bonus balls for one level (`outcomes[]`, `level`, `levelupPegs` = coin-peg hits needed to LEAVE this level, optional `ballsPlayed` for resume). Nested level-ups emit **one `bonusRound` per level** with increasing `level`; the client shows a level-up between them, and sizes each level's energy bar from `levelupPegs` |
 | `freeSpinTrigger` | Free-spin wheel segment (`segment` label e.g. `5X`/`BONUS`, `multiplier`, authoritative `amount` = round drop win × segment multiplier in **×100 currency units at book stake**, same encoding as `finalWin`). **Wallet payout is in book `payoutMultiplier` / `finalWin` — settled by RGS `/wallet/end-round`, not `/bet/action`.** |
 | `setTotalWin` | Running win (amount × 100, SDK convention) |
 | `finalWin` | Round payout |
@@ -80,12 +80,19 @@ Meter fill chances and feature triggers are authored in math; the client animate
 
 ## Feature tunables (single source of truth)
 
-All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_config` (keys: `spinMeterMax`, `bonusMeterMax`, `bonusPegHitProb`, `freeSpinSegments`, `bonusWheelFreeBalls`, `bonusLevelBalls`, `meterTierConfig`). The client mirrors `BONUS_LEVEL_BALLS` in `apps/plinko/src/game-logic/constants.ts`.
+> ⚠️ **Parts of this file describe an older design** (dedicated trigger modes, cross-bet meters, the
+> pre-Aztec ball ladder). For the CURRENT bonus values, probabilities and mechanics see
+> `stake-web-sdk/apps/plinko/docs/` — `bonus-mode.md` (mechanics), `bonus-values.md` (every value
+> and its derived probability, per mode).
+
+All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_config` (keys: `spinMeterMax`, `bonusMeterMax`, `bonusPegHitProb`, `bonusPegHitProbByMode`, `bonusLevelupPegs`, `freeSpinSegments`, `bonusWheelFreeBalls`, `bonusLevelBalls`, `bonusMeterTier`, `spinMeterTier`). The client mirrors `BONUS_LEVEL_BALLS` and `BONUS_LEVELUP_PEGS` in `apps/plinko/src/game-logic/constants.ts`.
 
 | Tunable | Default | Meaning |
 |---------|---------|---------|
 | `SPIN_METER_MAX` / `BONUS_METER_MAX` | 10 / 20 | Pocket / coin-peg hits to fill a meter |
-| `BONUS_PEG_HIT_PROB` | 0.14 | Per-ball chance to hit a bonus (coin) peg |
+| `BONUS_PEG_HIT_PROB` | 0.18 | Per-ball chance to hit a bonus (coin) peg — the DEFAULT |
+| `BONUS_PEG_HIT_PROB_BY_MODE` | base 0.18; buys 0.0447 / 0.0292 / 0.0252 / 0.0283 | PER-MODE coin-peg chance, published on each distribution's `peg_hit_prob` condition. The RTP lever that lets every mode share one level-up ladder |
+| `BONUS_LEVELUP_PEG_HITS_BY_LEVEL` | `5 8 14 25 42 71 121 205` | Coin-peg hits to leave level L. **Identical in every mode** |
 | `FREE_SPIN_SEGMENTS` | `2X 0.5X 1X 5X 10X BONUS 20X 15X` | Free-spin wheel; `NX` multiplies the round drop win, `BONUS` chains into a bonus round |
 | `BONUS_WHEEL_FREE_BALLS` | `100 90 80 70 60 50 40 30 20` | Bonus wheel entry free balls (level 1) |
 | `BONUS_LEVEL_BALLS` | `{2:20,3:30,4:50,5:75,6:100,7:150,8:200,9:300}` | Extra balls when the bonus meter re-fills during a round (level-up) |
@@ -98,7 +105,7 @@ To re-tune, change `BOARD_SLOT_MULTIPLIERS` (base RTP) and/or `TARGET_RTP`; `FRE
 
 ## Bonus level-up (in `game_calculations.simulate_bonus_round`)
 
-Level 1 entry balls come from the bonus wheel. While playing a level's balls, each `hitBonusPeg` advances an in-round bonus meter; every re-fill levels up (max level 9), awards `bonus_level_balls(level)` more balls, and emits another `bonusRound`. The accumulated win across all levels is added to `finalWin`; the client pays out when no more level-ups remain.
+Level 1 entry balls come from the bonus wheel (or, for a buy, the tier's fixed `entry_balls`). While playing a level's balls, each `hitBonusPeg` advances an in-round bonus meter; reaching `bonus_levelup_pegs(level)` levels up (max level 9), awards `bonus_level_balls(level)` more balls, and emits another `bonusRound`. The threshold ESCALATES per level and is the SAME in every mode — a buy is gated by its lower `peg_hit_prob`, not by a taller bar. The accumulated win across all levels is added to `finalWin`; the client pays out when no more level-ups remain.
 
 ## Session meter persistence
 

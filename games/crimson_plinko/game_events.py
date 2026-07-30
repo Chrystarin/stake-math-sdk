@@ -80,17 +80,25 @@ def bonus_round_event(
     outcomes: list[dict],
     level: int,
     balls_played: int = 0,
+    levelup_pegs: int = 0,
 ) -> None:
-    gamestate.book.add_event(
-        {
-            "index": len(gamestate.book.events),
-            "type": "bonusRound",
-            "freeBalls": int(free_balls),
-            "outcomes": outcomes,
-            "level": int(level),
-            "ballsPlayed": int(balls_played),
-        }
-    )
+    """One bonus level's batch of free balls.
+
+    `levelup_pegs` is the coin-peg count needed to LEAVE this level (`bonus_levelup_pegs(level)`) —
+    the escalating threshold is per-level, so the client cannot know it from the level-1 value alone.
+    It sizes the in-bonus energy bar from this field (`sizeBonusMeterForLevel` in apps/plinko
+    gameOrchestrator.ts); omitting it made every level render against the level-1 threshold."""
+    event = {
+        "index": len(gamestate.book.events),
+        "type": "bonusRound",
+        "freeBalls": int(free_balls),
+        "outcomes": outcomes,
+        "level": int(level),
+        "ballsPlayed": int(balls_played),
+    }
+    if int(levelup_pegs) > 0:
+        event["levelupPegs"] = int(levelup_pegs)
+    gamestate.book.add_event(event)
 
 
 def free_spin_trigger_event(

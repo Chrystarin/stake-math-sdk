@@ -8,6 +8,7 @@ from src.config.paths import PATH_TO_GAMES
 
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
+    BONUS_PEG_HIT_PROB,
     COEFFICIENT_SETS,
     DEFAULT_WINCAP,
     TARGET_RTP,
@@ -16,6 +17,7 @@ from plinko_data import (
     bet_mode_for_balls_per_drop,
     bonus_in_drop_for_balls,
     bonus_in_drop_rate,
+    bonus_peg_hit_prob,
     bonus_possible_for_balls,
     buy_bonus_mode_name,
     declared_rtp_for_balls,
@@ -81,7 +83,7 @@ class GameConfig(Config):
             bonus_only: bool = False,
             buy_entry_balls: int = 0,
             buy_levelup_head_start: float = 0.0,
-            buy_levelup_pegs: int = 0,
+            peg_hit_prob: float = BONUS_PEG_HIT_PROB,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -100,7 +102,10 @@ class GameConfig(Config):
                 "bonus_only": bool(bonus_only),
                 "buy_entry_balls": int(buy_entry_balls),
                 "buy_levelup_head_start": float(buy_levelup_head_start),
-                "buy_levelup_pegs": int(buy_levelup_pegs),
+                # PER-MODE coin-peg probability. Every mode climbs the SAME in-bonus level-up ladder
+                # (`bonus_levelup_pegs`); this is how fast it gets the hits, and it is the RTP lever
+                # that keeps each mode compliant under that shared ladder.
+                "peg_hit_prob": float(peg_hit_prob),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -126,6 +131,7 @@ class GameConfig(Config):
             bonus_in_drop = bonus_in_drop_for_balls(balls)
             rate = bonus_in_drop_rate(balls) if bonus_possible_for_balls(balls) else 0.0
             normal_quota = max(0.0, 1.0 - rate)
+            peg_prob = bonus_peg_hit_prob(mode_name)
 
             distributions = [
                 # Normal paid drop — the per-drop bonus meter (bonus_in_drop) fires the bonus when
@@ -139,6 +145,7 @@ class GameConfig(Config):
                         bonus_meter_start=bonus_start,
                         spin_in_drop=spin_in_drop,
                         bonus_in_drop=bonus_in_drop,
+                        peg_hit_prob=peg_prob,
                     ),
                 ),
             ]
@@ -156,6 +163,7 @@ class GameConfig(Config):
                             spin_in_drop=spin_in_drop,
                             bonus_in_drop=bonus_in_drop,
                             force_bonus=True,
+                            peg_hit_prob=peg_prob,
                         ),
                     ),
                 )
@@ -206,7 +214,10 @@ class GameConfig(Config):
                                 bonus_only=True,
                                 buy_entry_balls=int(tier["entry_balls"]),
                                 buy_levelup_head_start=float(tier.get("head_start", 0.0)),
-                                buy_levelup_pegs=int(tier.get("levelup_pegs", 0)),
+                                # Buys climb the SAME level-up ladder as an earned bonus; this lower
+                                # per-ball coin-peg probability is what keeps the big fixed entry batch
+                                # from running the ×10 award cascade away to level 9.
+                                peg_hit_prob=bonus_peg_hit_prob(name),
                                 # In-bonus free spin stays on (off only on 1-ball); no in-drop spin/bonus
                                 # since the buy drop is empty.
                                 spin_in_drop=False,

@@ -14,9 +14,11 @@ from plinko_data import (
     BUY_BONUS_TIER_DEFS,
     BONUS_IN_DROP_RATE,
     BONUS_LEVEL_BALLS,
+    BONUS_LEVELUP_PEG_HITS_BY_LEVEL,
     BONUS_METER_MAX,
     BONUS_METER_TIER,
     BONUS_PEG_HIT_PROB,
+    BONUS_PEG_HIT_PROB_BY_MODE,
     BONUS_WHEEL_FREE_BALLS,
     COEFFICIENT_SETS,
     COEFFICIENT_SETS_BY_BALLS,
@@ -97,6 +99,16 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     fe["spinMeterMax"] = SPIN_METER_MAX
     fe["bonusMeterMax"] = BONUS_METER_MAX
     fe["bonusPegHitProb"] = BONUS_PEG_HIT_PROB
+    # PER-MODE coin-peg probability. All modes share one in-bonus level-up ladder; this is the lever
+    # that keeps each of them at TARGET_RTP under it (base modes 0.18, buys much lower). Informational
+    # for the client — every coin-peg hit is already authored per ball in the book.
+    fe["bonusPegHitProbByMode"] = dict(BONUS_PEG_HIT_PROB_BY_MODE)
+    # SHARED in-bonus level-up ladder: coin-peg hits needed to leave level L, keyed by level string.
+    # Identical in every mode. The book also carries it per level on `bonusRound.levelupPegs`; this is
+    # the client's fallback for a book that omits the field.
+    fe["bonusLevelupPegs"] = {
+        str(level): pegs for level, pegs in BONUS_LEVELUP_PEG_HITS_BY_LEVEL.items()
+    }
     fe["freeSpinSegments"] = list(FREE_SPIN_SEGMENTS)
     # Free-spin wheel landing WEIGHTS (index-aligned to freeSpinSegments). The wheel shows 8 equal
     # slices but lands weighted so 100X / BONUS are rare (mirror in constants.ts FREE_SPIN_WEIGHTS).

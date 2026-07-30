@@ -200,8 +200,11 @@ SPIN_METER_TIER: dict[int, dict[str, float]] = {
 
 # Per-ball chance to award a bonus-meter coin-peg hit (independent of the landing pocket). Raised from
 # 0.14 → 0.18 for a LIVELIER per-drop meter (it visibly ticks up more each drop). Also drives the
-# in-bonus level-up: coin-peg hits during bonus balls re-fill the meter → next level (BONUS_LEVELUP_PEG_HITS
-# was bumped in step with this so level-ups stay a rare jackpot, not more common).
+# in-bonus level-up: coin-peg hits during bonus balls re-fill the meter → next level.
+#
+# THIS IS THE DEFAULT / BASE-MODE VALUE. It is now a PER-MODE tunable — see
+# `BONUS_PEG_HIT_PROB_BY_MODE` below, which is the RTP lever that lets every mode share ONE in-bonus
+# level-up ladder (`BONUS_LEVELUP_PEG_HITS_BY_LEVEL`). All four base modes keep 0.18.
 BONUS_PEG_HIT_PROB = 0.18
 
 # Free-spin wheel segments (label list) — ORIGINAL values, baked into the labeled `free-spin-roulette-
@@ -299,8 +302,13 @@ def bonus_levelup_pegs(level: int) -> int:
 
 
 # Backward-compat flat reference (= the level-1 threshold). Kept because a few dev tools still read it;
-# the live math uses the per-level `bonus_levelup_pegs()` above. NOT the buy threshold (buys keep their
-# own flat `levelup_pegs` override).
+# the live math uses the per-level `bonus_levelup_pegs()` above.
+#
+# ⚠️ THE LADDER IS SHARED BY EVERY MODE. The buy modes used to override it with a FLAT per-tier bar
+# (16/22/29/37) because a large fixed entry batch self-sustains the ×10 award cascade at the easy
+# escalating bar. That override is GONE: a bonus round now costs the same coin-peg hits to climb no
+# matter how it was entered, and each buy tier is instead held at TARGET_RTP by its own
+# `BONUS_PEG_HIT_PROB_BY_MODE` entry (a bought bonus's balls hit coin pegs less often).
 BONUS_LEVELUP_PEG_HITS = BONUS_LEVELUP_PEG_HITS_BY_LEVEL[1]
 
 
@@ -320,22 +328,24 @@ def bonus_level_balls(level: int) -> int:
 # the Crimson Plinko rule-set PDF (80/100/150/250). Because the cost is FIXED to the PDF, the
 # `entry_balls` are TUNED so RTP = mean(min(bonus_payout, wincap)) / cost ≈ TARGET_RTP.
 #
-# GATE-THE-CLIMB (`levelup_pegs`, buy-only): with the ×10 exponential ladder a large FIXED entry batch
-# self-sustains the cascade — at an easy bar it runs away to level 9 (~5,100 balls, e.g. superfury reaches
-# L9 ~100% at bar-10) → non-compliant (RTP 145–252%) + OOM. So each buy tier sets a HIGH per-tier level-up
-# threshold (`levelup_pegs` = 17/22/29/37, rising with entry) so climbing to the deep levels is RARE
-# (level 9 ≪0.01% of buys): level 2/3 (20/40 balls) land on a good run, the deep dumps are a rare jackpot,
-# and the payout is dominated by the entry balls' own board EV (~0.896 each) — so `entry_balls` tunes RTP
-# and stays RAM-safe. `head_start` is 0. `wincap` sits at each tier's ORGANIC (corner-luck + shallow-level)
-# payout tail so the advertised max win is reachably produced (~1/5k–1/13k) in the 200k buy sims while
-# barely clipping EV — the gated ladder compresses the tail, so premium/superfury caps dropped (450→330,
-# 600→480). One published mode per tier, `buy{key}`. Mirror in apps/plinko game/config.ts +
-# game/plinkoBetMode.ts. Tuned via gate_tune.py / verify_buybonus.py; pin via run.py + compliance_report.py.
+# GATE-THE-CLIMB (`peg_hit_prob`, buy-only): with the ×10 exponential ladder a large FIXED entry batch
+# self-sustains the cascade — on the shared escalating bar it runs away to level 9 (~5,100 balls, e.g.
+# superfury reaches L9 ~100%) → non-compliant (RTP 145–252%) + OOM. The climb therefore has to be gated,
+# but the GATE IS NO LONGER THE LADDER: every mode now shares `BONUS_LEVELUP_PEG_HITS_BY_LEVEL`, and each
+# buy tier instead lowers the per-ball COIN-PEG PROBABILITY of its own bonus balls (`peg_hit_prob`), so it
+# takes the same 5/8/14/... hits to climb but those hits arrive far more slowly. Same gate, same level
+# distribution (mean level 1.14–1.84, level 9 ≪0.01% of buys), one consistent rule on screen.
+# The payout is dominated by the entry balls' own board EV (~0.896 each), so `entry_balls` sets the coarse
+# RTP and `peg_hit_prob` trims it to TARGET_RTP (≈3–4 RTP points per 0.01 of probability). `head_start` is
+# 0. `wincap` sits at each tier's ORGANIC (corner-luck + shallow-level) payout tail so the advertised max
+# win is reachably produced (~1/1.3k–1/6.5k in the 200k buy sims) while barely clipping EV. One published
+# mode per tier, `buy{key}`. Mirror in apps/plinko game/config.ts + game/plinkoBetMode.ts.
+# Tuned via verify_buybonus.py; pin via run.py + compliance_report.py.
 BUY_BONUS_TIER_DEFS: list[dict] = [
-    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 260.0, "head_start": 0.0, "levelup_pegs": 16},
-    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 290.0, "head_start": 0.0, "levelup_pegs": 22},
-    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 330.0, "head_start": 0.0, "levelup_pegs": 29},
-    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 480.0, "head_start": 0.0, "levelup_pegs": 37},
+    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 260.0, "head_start": 0.0, "peg_hit_prob": 0.0447},
+    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 290.0, "head_start": 0.0, "peg_hit_prob": 0.0292},
+    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 330.0, "head_start": 0.0, "peg_hit_prob": 0.0252},
+    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 480.0, "head_start": 0.0, "peg_hit_prob": 0.0283},
 ]
 
 # Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
@@ -373,12 +383,46 @@ def buy_bonus_head_start(tier_key: str) -> float:
     return float(tier.get("head_start", 0.0)) if tier else 0.0
 
 
-def buy_bonus_levelup_pegs(tier_key: str) -> int:
-    """Buy-only in-bonus level-up peg threshold for a tier (0 = the global BONUS_LEVELUP_PEG_HITS).
-    Raised above the global value so buy-bonus level-ups are RARER — the snowball is tamed and the
-    tier's FIXED entry-ball count becomes a smooth, precise RTP lever (see BUY_BONUS_TIER_DEFS)."""
+def buy_bonus_peg_hit_prob(tier_key: str) -> float:
+    """Per-ball coin-peg probability inside a BOUGHT bonus (0 = fall back to BONUS_PEG_HIT_PROB).
+    Lowered below the base value so a big fixed entry batch climbs the SHARED level-up ladder slowly
+    enough to stay at TARGET_RTP and RAM-safe (see BUY_BONUS_TIER_DEFS)."""
     tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
-    return int(tier.get("levelup_pegs", 0)) if tier else 0
+    return float(tier.get("peg_hit_prob", 0.0)) if tier else 0.0
+
+
+# ---------------------------------------------------------------------------
+# PER-MODE coin-peg probability — the RTP lever that lets all 7 feature modes share ONE in-bonus
+# level-up ladder (`BONUS_LEVELUP_PEG_HITS_BY_LEVEL`).
+# ---------------------------------------------------------------------------
+# Keyed by the published RGS mode name. `game_config.py` puts the value on each distribution's
+# conditions (`peg_hit_prob`); `gamestate.py` passes it into `build_drop_outcomes` /
+# `build_feature_meter_events`, so it applies to BOTH the paid drop's bonus-trigger meter and the
+# bonus round's energy meter for that mode.
+#
+# BASE MODES keep 0.18: their RTP is already tuned by the bonus quota (`BONUS_IN_DROP_RATE`) and the
+# per-drop trigger bar (`BONUS_METER_TIER`), and their bonus depth (mean level ≈2.70) is the tuned
+# reference the ladder was designed around. ⚠️ The ×10 award ladder self-sustains just above this
+# value — at p = 0.25 the earned bonus explodes (mean payout 125 → 1,519, P(level 9) 0.001% → 29.7%),
+# so never interpolate a base-mode increase; re-measure it (measure_tuning_capped.py).
+#
+# BUY MODES take a much lower value (see BUY_BONUS_TIER_DEFS) because their entry batch is 72–239
+# FIXED balls; at 0.18 they would run away to level 9. Verified against the REAL simulate_bonus_round
+# (verify_buybonus.py, n=150k/tier): buystandard 95.64%, buyenhanced 95.76%, buypremium 95.74%,
+# buysuperfury 95.68% — spread 0.121%, max-win hit 1/1,136–1/6,803, largest book 299 balls.
+# The lever is ~3-4 RTP points per 0.01 of probability; re-run verify_buybonus.py after any nudge.
+BONUS_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
+    **{bet_mode_for_balls_per_drop(balls): BONUS_PEG_HIT_PROB for balls in BALLS_PER_DROP_OPTIONS},
+    **{
+        buy_bonus_mode_name(tier["key"]): float(tier["peg_hit_prob"])
+        for tier in BUY_BONUS_TIER_DEFS
+    },
+}
+
+
+def bonus_peg_hit_prob(mode_name: str) -> float:
+    """Per-ball coin-peg probability for a published bet mode (falls back to the global default)."""
+    return float(BONUS_PEG_HIT_PROB_BY_MODE.get(str(mode_name), BONUS_PEG_HIT_PROB))
 
 
 def _js_round(value: float) -> int:

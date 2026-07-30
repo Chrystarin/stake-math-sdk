@@ -16,7 +16,12 @@ from game_events import (
     spin_meter_event,
 )
 from game_override import GameStateOverride
-from plinko_data import coefficients_for, scaled_bonus_meter_max, scaled_spin_meter_max
+from plinko_data import (
+    BONUS_PEG_HIT_PROB,
+    coefficients_for,
+    scaled_bonus_meter_max,
+    scaled_spin_meter_max,
+)
 
 
 class GameState(GameStateOverride):
@@ -45,9 +50,11 @@ class GameState(GameStateOverride):
         buy_entry_balls = max(0, int(conditions.get("buy_entry_balls", 0)))
         # BUY BONUS Fury-meter head-start (in-bonus level-up meter starting fill, 0..1).
         buy_levelup_head_start = max(0.0, float(conditions.get("buy_levelup_head_start", 0.0)))
-        # BUY BONUS level-up peg threshold (buy-only; 0 = the global BONUS_LEVELUP_PEG_HITS). A higher
-        # threshold makes in-bonus level-ups rarer so the fixed entry-ball count tunes RTP smoothly.
-        buy_levelup_pegs = max(0, int(conditions.get("buy_levelup_pegs", 0)))
+        # PER-MODE coin-peg probability. Every mode climbs the SAME in-bonus level-up ladder
+        # (`bonus_levelup_pegs`); this controls how fast a mode's balls deliver those hits, and it is
+        # the lever that holds each mode at TARGET_RTP under that shared ladder. Applies to the paid
+        # drop's trigger meter AND to the bonus round's energy meter.
+        peg_hit_prob = float(conditions.get("peg_hit_prob", BONUS_PEG_HIT_PROB))
 
         self.repeat = True
         while self.repeat:
@@ -75,6 +82,7 @@ class GameState(GameStateOverride):
                     row_count=row_count,
                     balls_per_drop=balls_per_drop,
                     stake_per_ball=stake_per_ball,
+                    peg_hit_prob=peg_hit_prob,
                 )
             # When the bonus is FORCED this round (quota) on a meter-tier (10/20/50), make enough of the
             # drop's balls hit coin pegs so the bonus meter fills 0→max from REAL hits (no snap) — the
@@ -104,7 +112,7 @@ class GameState(GameStateOverride):
                 bonus_in_drop=bonus_in_drop,
                 buy_entry_balls=buy_entry_balls,
                 buy_levelup_head_start=buy_levelup_head_start,
-                buy_levelup_pegs=buy_levelup_pegs,
+                peg_hit_prob=peg_hit_prob,
             )
             total_win += feature_win
 
@@ -146,6 +154,9 @@ class GameState(GameStateOverride):
                         outcomes=event["outcomes"],
                         level=event["level"],
                         balls_played=event.get("ballsPlayed", 0),
+                        # Pegs to LEAVE this level — the escalating threshold is per-level, so the
+                        # client can only size each level's energy bar if the book publishes it.
+                        levelup_pegs=int(event.get("levelupPegs", 0)),
                     )
                 elif event_type == "spinMeter":
                     spin_meter_event(self, value=event["value"], max_value=event["max"])

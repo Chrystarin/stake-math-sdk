@@ -48,12 +48,17 @@ class GameCalculations(Executables):
         balls_per_drop: int,
         stake_per_ball: float,
         tier_balls_per_drop: int = 0,
+        peg_hit_prob: float = BONUS_PEG_HIT_PROB,
     ) -> tuple[list[dict], float]:
         """Sample `balls_per_drop` balls; each carries pocket + feature flags.
 
         `tier_balls_per_drop` is the PLAYER'S tier, which selects the board (1-ball has its own table)
         and whether the centre is the spin pocket. It defaults to `balls_per_drop` — correct for a paid
-        drop, but a bonus batch must pass the real tier explicitly (its ball count is not a tier)."""
+        drop, but a bonus batch must pass the real tier explicitly (its ball count is not a tier).
+
+        `peg_hit_prob` is the PER-MODE coin-peg probability (`plinko_data.bonus_peg_hit_prob`). It is
+        the RTP lever that lets every mode share one in-bonus level-up ladder; base modes pass the
+        default 0.18 and the buy modes pass their own much lower value."""
         tier = int(tier_balls_per_drop or balls_per_drop)
         coeffs = coefficients_for(row_count, tier)
         if not coeffs:
@@ -63,6 +68,7 @@ class GameCalculations(Executables):
         total_win = 0.0
         num_slots = len(coeffs)
         spin_pocket = spin_pocket_active_for_balls(tier)
+        peg_prob = max(0.0, min(1.0, float(peg_hit_prob)))
         for _ in range(balls_per_drop):
             rate_index = self.sample_rate_index(row_count, num_slots)
             # `hitSpinSlot` means "this ball fed the free-spin meter" — only on tiers that HAVE one. The
@@ -70,7 +76,7 @@ class GameCalculations(Executables):
             # 1-ball board pays its centre value (that tier has no spin meter to feed).
             hit_spin_slot = spin_pocket and self.is_spin_slot(rate_index, num_slots)
             multiplier = coeffs[rate_index]
-            hit_bonus_peg = py_random.random() < BONUS_PEG_HIT_PROB
+            hit_bonus_peg = py_random.random() < peg_prob
             total_win += stake_per_ball * multiplier
             outcomes.append(
                 {
@@ -120,17 +126,21 @@ class GameCalculations(Executables):
         balls_per_drop: int,
         entry_balls_override: int = 0,
         levelup_head_start: float = 0.0,
-        levelup_pegs_override: int = 0,
+        peg_hit_prob: float = BONUS_PEG_HIT_PROB,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
 
         Entry free balls come from the ABSOLUTE Aztec bonus wheel (`bonus_wheel_free_balls`, avg ≈ 60,
         tier-independent) and drop on the board. Coin-peg hits during the falling balls accumulate
-        "energy"; every `BONUS_LEVELUP_PEG_HITS` hits advances a level and unlocks the next batch of free
+        "energy"; `bonus_levelup_pegs(level)` hits advances a level and unlocks the next batch of free
         balls (`bonus_level_balls`, up to `MAX_BONUS_LEVEL`) — the inout "accumulate energy → unlock more
         drops, up to ~250 balls" escalation (a rare jackpot). Each level emits its own `bonusRound` so the
         client animates the level-ups in order. Returns (events, feature_win, final_level).
+
+        THE LADDER IS THE SAME FOR EVERY MODE — an earned bonus and a bought bonus need identical
+        coin-peg counts to climb. What differs per mode is `peg_hit_prob`: how often a falling ball
+        awards one of those hits. That is the per-mode RTP lever (see `BONUS_PEG_HIT_PROB_BY_MODE`).
 
         IN-BONUS ENERGY METER: starts EMPTY; the client fills it provisionally as bonus balls hit coin
         pegs and RESETS it on a level-up. We emit ONE `bonusMeter(value=0, max=levelup_max)` to set the
@@ -152,13 +162,11 @@ class GameCalculations(Executables):
             entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        # Level-up peg threshold. EARNED bonus: PER-LEVEL escalating (`bonus_levelup_pegs`) — frequent at
-        # low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). BUY bonus:
-        # a FLAT per-tier override (`levelup_pegs_override`) so the fixed entry stays a precise RTP lever.
-        buy_flat = int(levelup_pegs_override) if levelup_pegs_override and levelup_pegs_override > 0 else 0
-
+        # Level-up peg threshold: the SHARED per-level escalating ladder (`bonus_levelup_pegs`) — frequent
+        # at low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). Identical
+        # in every mode; the buy tiers are gated by their lower `peg_hit_prob` instead of by a taller bar.
         def threshold_for(lvl: int) -> int:
-            return buy_flat if buy_flat > 0 else bonus_levelup_pegs(lvl)
+            return bonus_levelup_pegs(lvl)
 
         spin_max = scaled_spin_meter_max(balls_per_drop)
         spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
@@ -185,6 +193,7 @@ class GameCalculations(Executables):
                 stake_per_ball=stake_per_ball,
                 # Bonus balls play the PLAYER'S tier board, not a board keyed by the batch size.
                 tier_balls_per_drop=balls_per_drop,
+                peg_hit_prob=peg_hit_prob,
             )
             feature_win += batch_win
             events.append(
@@ -267,7 +276,7 @@ class GameCalculations(Executables):
         bonus_in_drop: bool = False,
         buy_entry_balls: int = 0,
         buy_levelup_head_start: float = 0.0,
-        buy_levelup_pegs: int = 0,
+        peg_hit_prob: float = BONUS_PEG_HIT_PROB,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -332,6 +341,7 @@ class GameCalculations(Executables):
                     row_count=row_count,
                     stake_per_ball=stake_per_ball,
                     balls_per_drop=balls,
+                    peg_hit_prob=peg_hit_prob,
                 )
                 events.extend(bonus_events)
                 feature_win += bonus_win
@@ -362,12 +372,12 @@ class GameCalculations(Executables):
                 row_count=row_count,
                 stake_per_ball=stake_per_ball,
                 balls_per_drop=balls,
-                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel), the
-                # tier's Fury-meter head-start (in-bonus level-up meter starting fill), and the tier's
-                # buy-only level-up peg threshold (0 = the global BONUS_LEVELUP_PEG_HITS).
+                # BUY BONUS: seed the bonus with the tier's FIXED entry balls (0 = draw the wheel) and the
+                # tier's Fury-meter head-start (in-bonus level-up meter starting fill). The level-up
+                # ladder is the shared one; the tier's own `peg_hit_prob` is what gates the climb.
                 entry_balls_override=buy_entry_balls,
                 levelup_head_start=buy_levelup_head_start,
-                levelup_pegs_override=buy_levelup_pegs,
+                peg_hit_prob=peg_hit_prob,
             )
             events.extend(bonus_events)
             feature_win += bonus_win
