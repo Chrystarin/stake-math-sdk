@@ -297,9 +297,11 @@ class GameCalculations(Executables):
         `hitBonusPeg` WITHIN this drop. When it reaches `bonus_meter_max` (gated by `bonus_in_drop`, off
         on 1-ball), the bonus fires IN-DROP — the whole multi-level `simulate_bonus_round` resolves in
         THIS book and settles `drop + bonus` (one bet, no cross-bet state). A small `force_bonus` QUOTA
-        also fires the bonus (1-ball, where the meter can't fill; and a fine-tune top-up on the others);
-        a quota fire snaps the meter to full first so it still reads as a completion. The board (~0.896)
-        funds the free bonus. (`suppress_features` is unused now but kept for signature stability.)
+        (`BONUS_IN_DROP_RATE`, a fine-tune top-up on 10/20/50 — the 1-ball tier's rate is 0.0 and its
+        stratum is omitted) marks a book as a guaranteed bonus, but it does NOT bypass the meter:
+        `gamestate.py` pre-fills the drop's coin-peg flags so the meter still fills 0 → max from real
+        hits and `bonus_meter_fired` is already set by the time we get here. The board (~0.896) funds
+        the free bonus. (`suppress_features` is unused now but kept for signature stability.)
         """
         _ = suppress_features  # unused (kept for signature stability)
         events: list[dict] = []
@@ -362,7 +364,12 @@ class GameCalculations(Executables):
         # Fire the bonus (once) when the per-drop meter filled in-drop OR the force_bonus quota selected
         # this book. The whole multi-level bonus resolves in THIS book → settles `drop + bonus`.
         if bonus_meter_fired or force_bonus:
-            # A QUOTA fire (meter not full): snap the meter to full first so it reads as a completion.
+            # SAFETY NET, currently UNREACHABLE — snap the meter to full so a fire always reads as a
+            # completion. Every live `force_bonus` caller already arrives with a full meter: base quota
+            # books get their coin-peg flags pre-filled by `ensure_coin_pegs_fill_meter` (gamestate.py),
+            # and buy-bonus books enter with `bonus_meter_start = bonus_meter_max`. This only fires if a
+            # future tier pairs a non-zero quota with `bonus_in_drop=False` — keep it so such a tier
+            # can't emit a bonus over a half-empty meter, which the rules copy would contradict.
             if force_bonus and bonus_meter < bonus_meter_max:
                 bonus_meter = bonus_meter_max
                 events.append(

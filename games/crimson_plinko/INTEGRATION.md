@@ -76,12 +76,13 @@ Meter fill chances and feature triggers are authored in math; the client animate
 
 **Payout is authoritative and consistent.** `finalWin` = base drop win + every `bonusRound` ball + free-spin `NX` scaling. The client animates the **exact** `outcomes` from the book (`game/gameOrchestrator.ts:startAuthoritativeBonusRound`, `PlinkoBoard.svelte:bonusBallDrop`) — it never rolls its own dice — so the on-screen total always equals the wallet payout. `publish_verify.find_feature_payout_mismatches` re-derives the displayed total from each book's events and fails the build on any mismatch.
 
-**Publish books:** `spinMeterStart` / `bonusMeterStart` on `plinkoDrop` echo distribution `conditions` for the served stratum (`spin_meter_mid` / `high` / `full`, `bonus_meter_mid` / `high` / `full`, per balls tier). Live RGS must select a book whose `spin_meter_start` / `bonus_meter_start` matches play `meta` when the session meter is partially filled; otherwise `freeSpinTrigger` / `bonusRoulette` and combined payout will be missing from the book.
+**Publish books:** `spinMeterStart` / `bonusMeterStart` on `plinkoDrop` echo the distribution `conditions`, which are now a **fixed per-tier constant** (`scaled_spin_meter_start` / `scaled_bonus_meter_start`), not a stratum selector. Book selection therefore never has to match a carried meter value — any book of the right `mode` is servable at any time, and every feature it can pay is already inside it.
 
 ## Feature tunables (single source of truth)
 
-> ⚠️ **Parts of this file describe an older design** (dedicated trigger modes, cross-bet meters, the
-> pre-Aztec ball ladder). For the CURRENT bonus values, probabilities and mechanics see
+> ⚠️ The dedicated-trigger-mode and cross-bet-meter design this file used to document is **gone** —
+> features are folded in-drop (see *Feature triggering*). Individual **values** below can still lag the
+> math; `plinko_data.py` is the source of truth, and for bonus mechanics/probabilities see
 > `stake-web-sdk/apps/plinko/docs/` — `bonus-mode.md` (mechanics), `bonus-values.md` (every value
 > and its derived probability, per mode).
 
@@ -98,10 +99,11 @@ All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_co
 | `BONUS_LEVEL_BALLS` | `{2:20,3:30,4:50,5:75,6:100,7:150,8:200,9:300}` | Extra balls when the bonus meter re-fills during a round (level-up) |
 
 **RTP is tuned for compliance (90.0%–96.70%, cross-mode variance < 1%).** Every mode reads ~`TARGET_RTP` (95.7%, `plinko_data.py`):
-- **Base modes** pay the flat per-ball board EV (`BOARD_SLOT_MULTIPLIERS`, ~0.957/ball) with **no in-drop feature** (see *Feature triggering* below), so all four tiers land at the same RTP regardless of ball count.
-- **Trigger modes** are EV-priced like buy-feature modes: `run.py:set_trigger_mode_index_costs` sets each one's `index.json` cost = `mean_payout / TARGET_RTP`, so the Stake math summary reads them at ~`TARGET_RTP` too (they stay free for players — `config.json` cost is `TRIGGER_MODE_COST`).
+- **Feature tiers (10 / 20 / 50)** pay the shared board's `0.89635×`/ball (`BOARD_SLOT_MULTIPLIERS`); the free in-drop features — folded into the same book (see *Feature triggering* below) — make up the remaining ~6 points to `TARGET_RTP` on every tier.
+- **`onedrop`** is feature-free, so its RTP *is* its board: `COEFFICIENT_SETS_BY_BALLS[1]` at `0.95396×`/ball (`declared_rtp_for_balls(1)`), clear of the 90% floor without any feature funding.
+- **Buy-bonus modes** are EV-priced: each tier's `cost` (80 / 100 / 150 / 250 × bet-per-ball) is tuned against its fixed `entry_balls` so the mode also lands at ~`TARGET_RTP`.
 
-To re-tune, change `BOARD_SLOT_MULTIPLIERS` (base RTP) and/or `TARGET_RTP`; `FREE_SPIN_SEGMENTS` / `BONUS_WHEEL_FREE_BALLS` only change the *feel* of the feature (their EV is absorbed by the trigger-mode price).
+To re-tune, change `BOARD_SLOT_MULTIPLIERS` (base EV) and/or `TARGET_RTP`, then re-solve the per-tier `BONUS_IN_DROP_RATE` quotas with `measure_tuning_capped.py`. Changing `FREE_SPIN_SEGMENTS` / `BONUS_WHEEL_FREE_BALLS` / `BONUS_LEVEL_BALLS` moves real EV now that the features are free and folded — the quota (and, if it bottoms out at zero, the tier's `BONUS_METER_TIER` max) is the lever that absorbs it.
 
 ## Bonus level-up (in `game_calculations.simulate_bonus_round`)
 
@@ -109,55 +111,81 @@ Level 1 entry balls come from the bonus wheel (or, for a buy, the tier's fixed `
 
 ## Session meter persistence
 
-Each book is one bet. The client persists the running spin / bonus meters across bets
-(`game/plinkoSessionMeters.ts`) and applies each book's meter events relative to the carried value,
-so the meters accumulate instead of resetting. The meter value rides along on play `meta`
+**The math is stateless — there is no cross-bet meter.** Each book is one bet: both meters reset to
+their fixed per-tier start (`scaled_spin_meter_start` / `scaled_bonus_meter_start`) at the top of every
+drop and must fill within that drop to fire. A book never depends on, or carries out, meter state.
+
+The client's `game/plinkoSessionMeters.ts` keeps its own per-tier running value for **display
+continuity only** — the book is authoritative for every trigger and payout, so that store cannot
+create or suppress a feature. The value still rides along on play `meta`
 (`buildBetMetaPlayConditions`), but **production RGS does not select books by `meta`** (selection is
 weighted-random per `mode`), so meta is best-effort / for force-replay only.
 
-## Feature triggering — dedicated trigger modes
+## Feature triggering — folded, in-drop (Option A)
 
-Because RGS honors `mode` (not `meta`), a full meter triggers its feature via a **dedicated mode**,
-not by hoping RGS serves a meter-full stratum book. When the client's spin (or bonus) meter fills,
-it auto-places a bet in the matching trigger mode; that mode's books **always** emit the feature,
-so RGS computes the payout (no client-side trigger or payout). The triggering meter then resets.
+Both features resolve **inside the base book that paid for them**. There are no dedicated trigger
+modes, no second auto-placed bet, and no cross-bet meter state — each book is one self-contained bet,
+and both meters reset every drop.
 
-| When | Mode (per tier) | Book always emits | Condition flag |
-|------|-----------------|-------------------|----------------|
-| Spin meter full | `freespinone/ten/twenty/fifty` | `freeSpinTrigger` (+ bonus on `BONUS` segment) | `force_freespin` |
-| Bonus meter full | `bonusone/ten/twenty/fifty` | `bonusRoulette` + `bonusRound`(s) | `force_bonus` |
+| Feature | Meter (`plinko_data`) | Fires when | Book emits |
+|---------|----------------------|------------|------------|
+| Free spin | `SPIN_METER_TIER` — max 6 / 10 / 21, start 0 / 1 / 5 | balls landing in the centre SPIN pocket fill it to `max` **within this drop** | `freeSpinTrigger` (chains `bonusRoulette` + `bonusRound` on the `BONUS` segment) |
+| Bonus | `BONUS_METER_TIER` — max 7 / 9 / 17, start **0 on every tier** | balls striking the gold coin pegs fill it to `max` **within this drop** | `bonusRoulette` + one `bonusRound` per level |
 
-- **Cost / free:** trigger modes simulate at the tier cost (so RTP math never divides by zero) and
-  are **published at `TRIGGER_MODE_COST` (0 = free) in BOTH `config.json` (RGS debit) and
-  `config_fe_*.json` (FE wager display)** — via `run.py:set_trigger_mode_costs_free` +
-  `write_plinko_fe_config`. The FE one matters: the client computes the balance debit as
-  `plinkoPlayAmount × betMode.cost`, so a non-zero FE trigger cost makes the client deduct the
-  balance for an auto-fired free feature (and flickers the win). RGS debit = `amount × 0` = 0 while
-  payout still = `amount × payoutMultiplier`. **If your RGS rejects a zero-cost play, set
-  `TRIGGER_MODE_COST` (plinko_data.py) to a paid value and mirror it in `apps/plinko/src/game/config.ts`.**
-- **Math-summary cost (separate from the player debit):** `run.py:set_trigger_mode_index_costs`
-  rewrites each trigger mode's `index.json` cost to `mean_payout / TARGET_RTP` so the Stake math
-  tool scores them at ~`TARGET_RTP` (a forced feature pays many ×, so at the raw tier cost it would
-  read as thousands-of-percent RTP and blow up the cross-mode variance check). This is metadata for
-  the math eval only; it does **not** change what RGS charges (that's `config.json`, still 0).
-- Client wiring: `plinkoBetMode.ts:plinkoActiveBetMode` (mode selection), `gameOrchestrator.ts:maybeAutoFireFeatureTrigger` (auto-fire when full + idle).
+Gated by the `spin_in_drop` / `bonus_in_drop` conditions — both off on `onedrop`, which has neither
+feature. The whole feature (including a multi-level bonus) resolves in the same book, so one round
+settles `drop + free spin + bonus` in a single `finalWin`.
 
-Base modes run with `suppress_features=True`: a meter can **fill** within a base book (emitting
-`spinMeter`/`bonusMeter`, kept book-authoritative) but the feature is **never fired in-drop** — the
-full meter carries over and the trigger mode fires it on the next bet. This keeps base RTP at the
-flat per-ball board EV on every tier; the `_FEATURE_STRATA` meter-start strata are now only for
-meter-state variety in the published books (RTP-neutral).
+Each feature tier publishes **two** base distributions:
+
+| Criteria | Quota | Role |
+|----------|-------|------|
+| `basegame_balls_X` | `1 − BONUS_IN_DROP_RATE[X]` | Normal paid drop; the meter fires the bonus organically when this drop's coin pegs fill it |
+| `basegame_bonus_balls_X` | `BONUS_IN_DROP_RATE[X]` — 0.283% / 0.253% / 1.350% | `force_bonus`: a guaranteed bonus, used to fine-tune the tier onto `TARGET_RTP` |
+
+**The quota is not a second trigger path.** The natural fire rate is discrete
+(`P(Binomial(balls, peg_hit_prob) ≥ max)`) and can't be dialled onto an exact RTP, so a small share of
+books is pre-selected to contain a bonus. Those books do **not** bypass the meter: `gamestate.py`
+calls `ensure_coin_pegs_fill_meter`, turning on enough of the drop's `hitBonusPeg` flags — spread
+across the drop — that the meter fills 0 → max from **real coin-peg hits** and fires down the ordinary
+in-drop path. `hitBonusPeg` is sampled independently of the ball's pocket, so this is EV-neutral on the
+drop itself. Every tier with a non-zero quota sets `bonus_in_drop`, so **no published book can carry a
+bonus event over a meter that isn't full** — which is exactly what the player-facing rules promise
+(`InfoModal.svelte`: "the Bonus meter fills as balls strike the 3 gold coin pegs"). The snap-to-full
+branch in `game_calculations.build_feature_meter_events` is an **unreachable** safety net, kept only
+for a hypothetical future tier that pairs a quota with `bonus_in_drop=False`.
+
+**Funding.** The shared board pays `0.89635×`/ball; the folded free features lift every feature tier to
+`TARGET_RTP` (95.7%). `onedrop` has no features and plays its own board at `0.95396×`/ball.
+
+**Client wiring.** `gameOrchestrator.ts:maybeAutoFireFeatureTrigger` is a retained **no-op** — nothing
+auto-fires, the client just animates the book's events. `plinkoBetMode.ts:plinkoActiveBetMode` still
+selects the mode from the UI tier, and `isSingleBallMode` independently blocks feature events on
+`onedrop`. `suppress_features` survives only as an ignored `build_feature_meter_events` kwarg (kept for
+signature stability).
 
 ## Balls per drop (RGS bet modes)
 
-Stake Engine selects books by **`/wallet/play` `mode`**, not play `meta` alone. One published mode per tier:
+Stake Engine selects books by **`/wallet/play` `mode`**, not play `meta` alone. Eight published modes —
+one base mode per tier, plus one buy-bonus mode per tier:
 
-| UI balls | Play `mode` | Book criteria |
-|----------|-------------|---------------|
-| 1 | `onedrop` | `basegame_balls_1` |
-| 10 | `tendrop` | `basegame_balls_10` |
-| 20 | `twentydrop` | `basegame_balls_20` |
-| 50 | `fiftydrop` | `basegame_balls_50` |
+| UI balls | Play `mode` | Cost | Book criteria |
+|----------|-------------|------|---------------|
+| 1 | `onedrop` | 1 | `basegame_balls_1` |
+| 10 | `tendrop` | 10 | `basegame_balls_10`, `basegame_bonus_balls_10` |
+| 20 | `twentydrop` | 20 | `basegame_balls_20`, `basegame_bonus_balls_20` |
+| 50 | `fiftydrop` | 50 | `basegame_balls_50`, `basegame_bonus_balls_50` |
+
+| Buy tier | Play `mode` | Cost (× bet-per-ball) | Entry balls | Book criteria |
+|----------|-------------|-----------------------|-------------|---------------|
+| Standard | `buystandard` | 80 | 72 | `buybonus_buystandard` |
+| Enhanced | `buyenhanced` | 100 | 95 | `buybonus_buyenhanced` |
+| Premium | `buypremium` | 150 | 145 | `buybonus_buypremium` |
+| Super Fury | `buysuperfury` | 250 | 239 | `buybonus_buysuperfury` |
+
+Buy modes are `bonus_only`: the paid drop is **empty**, the bonus meter enters pre-filled to `max`, and
+the bonus starts immediately with the tier's fixed `entry_balls` (in-bonus level-ups add more on top).
+Mirror the tier list in `apps/plinko/src/game/plinkoBetMode.ts:BUY_BONUS_TIERS`.
 
 **`onedrop` is FEATURE-FREE.** It is the only mode with a single distribution: `spin_in_drop` and
 `bonus_in_drop` are off and its `BONUS_IN_DROP_RATE` is 0, so `game_config.py` omits the
@@ -167,7 +195,8 @@ independently (`isSingleBallMode` in `apps/plinko/src/game/gameOrchestrator.ts`)
 board pays there, that tier plays its own board (`COEFFICIENT_SETS_BY_BALLS[1]`: center 0.1×, the two
 pockets either side 0.3×) for an RTP of ~95.4%, and its advertised max win is the top pocket, 100×.
 
-Each mode's LUT also contains the meter-start strata (`spin_meter_full_balls_10`, `bonus_meter_full_balls_10`, …) — the `basegame_balls_X` row above is just the zero-meter stratum.
+Those are **all** the criteria a mode publishes — there are no meter-start strata
+(`spin_meter_full_balls_10` and friends are gone with the cross-bet meter design).
 
 The web client sets `stateBet.activeBetModeKey` from the UI tier before each play (`plinkoBetMode.ts`).
 

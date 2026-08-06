@@ -150,8 +150,10 @@ class GameConfig(Config):
                 ),
             ]
             if rate > 0.0:
-                # QUOTA bonus stratum — guarantees a bonus (snaps the meter to full) to fine-tune this
-                # tier to TARGET_RTP. One book settles `drop + bonus`. Skipped entirely on 1-ball.
+                # QUOTA bonus stratum — guarantees a bonus to fine-tune this tier to TARGET_RTP. One
+                # book settles `drop + bonus`. Skipped entirely on 1-ball. NOT a meter bypass: every
+                # tier reaching here has `bonus_in_drop=True`, so `gamestate.py` pre-fills the drop's
+                # coin-peg flags and the meter still completes 0 → max from real hits.
                 distributions.append(
                     Distribution(
                         criteria=f"basegame_bonus_balls_{balls}",

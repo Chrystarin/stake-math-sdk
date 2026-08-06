@@ -121,8 +121,9 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     # Level-up table keyed by level string (JSON object) for the client to mirror.
     fe["bonusLevelBalls"] = {str(level): balls for level, balls in BONUS_LEVEL_BALLS.items()}
     # Per-drop BONUS meter (max + start) per balls-per-drop tier (Option A). The client resets the meter
-    # each round to this start and fills it in-drop; reaching max fires the bonus. 1-ball is absent (its
-    # meter is cosmetic — bonus comes from the quota). Mirror in constants.ts BONUS_METER_TIER.
+    # each round to this start and fills it in-drop; reaching max fires the bonus. 1-ball is absent — its
+    # meter is purely cosmetic and that tier has NO bonus at all (its quota is 0 too). Mirror in
+    # constants.ts BONUS_METER_TIER.
     fe["bonusMeterTier"] = {
         str(balls): {"max": int(cfg["max"]), "startRatio": cfg["start_ratio"]}
         for balls, cfg in BONUS_METER_TIER.items()

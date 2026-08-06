@@ -41,7 +41,7 @@ class GameState(GameStateOverride):
         # FREE SPIN is per-drop + in-drop: enabled on the 10/20/50 tiers, off on 1-ball.
         spin_in_drop = bool(conditions.get("spin_in_drop", False))
         # BONUS is per-drop + in-drop (Option A): the meter fills from this drop's coin-pegs and fires
-        # the bonus when full. Enabled on 10/20/50; off on 1-ball (its bonus comes from the quota).
+        # the bonus when full. Enabled on 10/20/50; off on 1-ball, which has no bonus at all (quota 0).
         bonus_in_drop = bool(conditions.get("bonus_in_drop", False))
         # BUY BONUS modes: bonus-only (empty paid drop) + the bonus seeded with a FIXED entry-ball count.
         # The meter is pre-filled to FULL so the client renders it full at round start (the bonus fires
@@ -87,7 +87,10 @@ class GameState(GameStateOverride):
             # When the bonus is FORCED this round (quota) on a meter-tier (10/20/50), make enough of the
             # drop's balls hit coin pegs so the bonus meter fills 0→max from REAL hits (no snap) — the
             # player watches the meter fill to FULL, then the bonus fires. EV-neutral (coin pegs don't
-            # affect the pocket win). 1-ball can't fill a meter from one ball, so it keeps the snap.
+            # affect the pocket win, `hitBonusPeg` is sampled independently of the pocket). This is what
+            # keeps the quota from being a second, meter-bypassing trigger path: 10/20/50 are the ONLY
+            # tiers with a non-zero quota and all three set `bonus_in_drop`, so no published book can
+            # carry a bonus event over a meter that isn't full. 1-ball never reaches here (quota 0).
             if force_bonus and bonus_in_drop:
                 self.ensure_coin_pegs_fill_meter(outcomes, bonus_meter_max)
             (

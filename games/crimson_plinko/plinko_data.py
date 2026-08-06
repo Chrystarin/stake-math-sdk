@@ -106,17 +106,27 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # (BONUS_METER_TIER) fills from this drop's own coin-peg hits — NOT a cross-bet meter (statelessness:
 # each bet is independent). This `BONUS_IN_DROP_RATE` is now only a small `force_bonus` QUOTA used to
 # FINE-TUNE the higher tiers to exactly TARGET_RTP, since the meter fire rate is DISCRETE
-# (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. A quota
-# book snaps the meter to full + plays the bonus, so it still reads as a meter completion. INITIAL
+# (`P(Binomial(balls, BONUS_PEG_HIT_PROB) ≥ hits_to_fill)`) and can't land precisely on its own. INITIAL
 # values; tune via measure_tuning.py / run.py so each base mode lands at ~TARGET_RTP.
+#
+# ⚠️ THE QUOTA IS NOT A SECOND TRIGGER PATH. A quota book does not bypass the meter: `gamestate.py`
+# calls `ensure_coin_pegs_fill_meter` on it, turning on enough of the drop's `hitBonusPeg` flags
+# (spread across the drop) that the meter fills 0 → max from REAL coin-peg hits and fires down the
+# ordinary in-drop meter path. Every tier with a non-zero rate here has `bonus_in_drop=True` and
+# `start_ratio 0.0`, so NO book can ever carry a bonus event with a meter that isn't full — which is
+# exactly what the player-facing rules promise ("the meter fills as balls strike the gold coin pegs").
+# What the quota actually fixes is the NUMBER of coin-peg hits on ~0.25–1.35% of drops; `hitBonusPeg`
+# is sampled independently of the ball's pocket, so this is EV-neutral on the drop itself.
 #
 # ⚠️ THE 1-BALL TIER IS FEATURE-FREE (rate 0.0, and `game_config.py` omits its bonus stratum entirely —
 # `Distribution` asserts quota > 0, so a 0 rate MUST mean "no distribution", not "quota 0"). onedrop can
 # neither meter-fire (one ball ⇒ at most one coin-peg hit) nor quota-fire, and `spin_in_drop` is off, so
 # an `onedrop` book can NEVER carry bonusRoulette / bonusRound / freeSpinTrigger events. The client
 # enforces the same rule independently (`isSingleBallMode` in apps/plinko gameOrchestrator.ts).
-# CONSEQUENCE: onedrop RTP = the bare board EV (~89.6%), BELOW the 90.00% floor — the tier needs its own
-# funding (e.g. a 1-ball-only board table) before publishing. Re-check with measure_tuning_capped.py.
+# CONSEQUENCE: onedrop RTP is exactly its board EV, with nothing else funding it. That is why the tier
+# has its OWN board (`COEFFICIENT_SETS_BY_BALLS[1]`) paying 0.95396×/ball — clear of the 90.00% floor —
+# instead of the shared 0.89635×/ball table, which would put it UNDER the floor. Do not point onedrop at
+# the shared board. Re-check with measure_tuning_capped.py.
 # Re-tuned for the ESCALATING per-level level-up (`bonus_levelup_pegs`, thresholds 5,8,14,25,42,71,121,
 # 205) + the avg-60 entry wheel (BONUS_WHEEL_FREE_BALLS = 20..100), via the WINCAP-AWARE tuner
 # (measure_tuning_capped.py). Escalating level-ups make leveling FREQUENT + graduated (avg bonus level
