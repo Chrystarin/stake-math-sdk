@@ -155,17 +155,54 @@ if __name__ == "__main__":
     # Base mode RTP = board EV (+ the rare in-drop free spin). Convergence is set by the heavy 100x corner
     # pocket (p≈6e-5), so low tiers need many sims (mean over uniform weights); bump them (or use
     # PLINKO_BOOKS_COMPRESSION=1) if the ±0.5% band/spread is noisy on the low tiers.
+    #
+    # ⚠️ SIM COUNTS ARE A COMPLIANCE INPUT, NOT JUST A RUNTIME KNOB. Stake reads each mode's RTP off the
+    # PUBLISHED LUT (mean payout / cost, uniform weights — see `make_lookup_tables`), so what it grades is
+    # an ESTIMATE with standard error sd_book/sqrt(n). Measured per-book sd of payout/cost is onedrop
+    # 3.24, tendrop 1.31, twentydrop 0.98, fiftydrop 0.62, buys 0.22-0.38 (the 1-ball tier is worst
+    # because its whole book is one ball, and a lone 100x corner moves the mean a long way — a 200k-sim
+    # onedrop run has been observed reading 96.04% against a true 95.657%).
+    #
+    # At the previous counts (1M/400k/240k/400k + 200k buys) the SEs were 0.32%/0.21%/0.20%/0.10% and
+    # ~0.05-0.09%, which puts the RANGE across 8 independent estimates at a mean of 0.48% and gives a
+    # ~40% chance of BREACHING the 0.50% cross-mode limit even with every mode's TRUE RTP identical. The
+    # counts below hold every mode at SE <= ~0.10%, which drops the mean range to 0.26% and the breach
+    # probability to ~0.4%. Cost is ~2x the old run (~13.6M sims, ~1.5-2h, ~28GB of intermediate .json)
+    # and RAM is unchanged (it scales with threads x PLINKO_BATCH x book size, not with total sims).
+    # ⚠️ Do NOT trim these back to "save time" — re-derive them from sd/sqrt(n) if the math changes.
+    # ⚠️ HARD PLATFORM CEILING: 10,000,000 results PER MODE. Over it the ACP publish is rejected outright
+    # with `ERR_MATH_OUTSIDE_RANGE` ("Too many simulations!"), so no mode may exceed it — onedrop was
+    # first sized at 11M and bounced on exactly that. 9.6M keeps ~4% of headroom AND divides evenly by
+    # threads x PLINKO_BATCH at 1/2/4/8 threads, so the SDK's `sims_per_thread` rounding lands on exactly
+    # 9,600,000 books rather than drifting up toward the ceiling. It is also the FLOOR on onedrop's SE:
+    # at the cap the best achievable is ~0.102%, so that tier cannot be made quieter by sim count alone.
+    #
+    # ⚠️ A RE-RUN IS NOT A RE-ROLL. `GeneralGameState.reset_seed` seeds `random` with `sim + 1`, so the
+    # books — and therefore each mode's LUT RTP — are a deterministic function of the sim COUNT. Running
+    # `make run` again at the same counts reproduces the same numbers exactly. So check the spread with
+    # `compliance_report.py` BEFORE uploading, and if a mode landed unluckily the lever is to change its
+    # count (e.g. onedrop 9_600_000 -> 9_500_000), which draws a different sample. Re-running unchanged
+    # will not move it.
+    # ⚠️ RUN A PUBLISH BUILD WITH PLINKO_BOOKS_COMPRESSION=1. At these counts onedrop's uncompressed
+    # `books_onedrop.json` is ~7GB, and that format is a single JSON ARRAY with no per-line structure, so
+    # `publish_verify._resolve_book_payouts` has to `json.load` it whole and will run out of memory. The
+    # compressed path is line-delimited and streams (see `_iter_books`). The uncompressed default is only
+    # for local dev, where `apps/plinko`'s `sync-math-books` wants a readable `.json` — and there you want
+    # PLINKO_SIM_DIV set anyway.
     sims_div = max(1, int(os.getenv("PLINKO_SIM_DIV", "1")))  # set >1 for a fast smoke test
     # FOLDED-BONUS DESIGN: only 4 base modes. Each mode mixes a normal-drop stratum (quota 1-rate) and a
     # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
-    # (level-ups, big ball dumps), so the base modes need heavy sims to converge the bonus add — onedrop
-    # most of all (its whole feature add is that bonus). Bump if the ±0.5% band/spread is noisy.
+    # (level-ups, big ball dumps), so the feature tiers need heavy sims to converge the bonus add. onedrop
+    # is the exception: it has NO bonus stratum at all, and needs the most sims purely because a one-ball
+    # book is the noisiest thing here (see the SE table above).
     # fiftydrop: was 1.5M ONLY to surface the rare 400× max-win spike (~1/165k on the old FLAT-bar bonus).
     # The ESCALATING level-up made bonuses bigger + frequent, so tier-50 now hits the 400× cap ~1/4,900
     # (≈33× more often) — the spike appears in ~120 books at 400k. Cut 1.5M → 400k: still converges RTP +
     # the achievable max-win, and (with 50 balls/drop) it is BY FAR the heaviest mode for RAM, so this is
     # the single biggest `make run` memory saving. Bump back up only if the observed fiftydrop max < 400×.
-    base_sims = {1: 1_000_000, 10: 400_000, 20: 240_000, 50: 400_000}
+    # 1/10/20 are sized by the SE arithmetic above (sd/sqrt(n) <= ~0.10%); 50 already met it at 400k.
+    # onedrop wants 10.5M for a flat 0.10% but is held at 9.6M by the 10M-per-mode publish ceiling.
+    base_sims = {1: 9_600_000, 10: 1_800_000, 20: 1_000_000, 50: 400_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS

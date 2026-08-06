@@ -1,9 +1,18 @@
 """Wincap-aware RTP tuner for the ×10 bonus-level ladder (dev tool, NOT published).
 
+⚠️ SUPERSEDED FOR SOLVING QUOTAS — USE `rtp_audit.py`. This tool averages the SAMPLED payout, and its
+variance is dominated by the board's 100× corner pockets: at the sample counts below the normal stratum's
+mean carries ~0.2% of noise, while the quota lever is ~11 RTP points per 0.001 of quota. Solving from it
+put the published tendrop LUT at 95.01% and twentydrop at 95.38% against a 95.700% target — most of the
+0.66% cross-mode RTP spread that failed Stake's 0.50% limit. `rtp_audit.py` takes the feature-fire rates
+from the binomial in closed form and folds the board in as its exact analytic EV × the ball count, and
+reads each mode to ±0.01%. Keep this one for what it is still good at: sweeping the bonus SHAPE
+(BONUS_LEVELUP_PEG_HITS, entry scale) and reading level depth / cap-hit / max-balls per tier.
+
 The stock measure_tuning.py measures the UNCAPPED bonus payout, which the ×10 ladder inflates far past
 the per-tier wincaps. This tool Monte-Carlos the REAL stratified mode payout WITH the wincap applied
-(mirroring gamestate + game_override), so the solved quota is correct, and lets us sweep
-BONUS_LEVELUP_PEG_HITS (the lever that controls how often a bonus snowballs to deep levels).
+(mirroring gamestate + game_override), and lets us sweep BONUS_LEVELUP_PEG_HITS (the lever that controls
+how often a bonus snowballs to deep levels).
 
 Run: env/Scripts/python.exe games/crimson_plinko/measure_tuning_capped.py [LEVELUP_PEG_HITS]
 """

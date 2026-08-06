@@ -27,12 +27,22 @@ BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.2, 0, 0.2, 0.4, 1.5, 5, 20
 # 1-BALL BOARD (onedrop only). That tier is FEATURE-FREE — no free spin, no bonus (see
 # BONUS_IN_DROP_RATE) — so the centre pocket, which exists only to fill the free-spin meter, would be a
 # dead 0× slot hit ~20.9% of the time, leaving onedrop at the bare board EV (~89.6%): BELOW the 90.00%
-# compliance floor. The 1-ball board therefore pays the CENTRE 0.1× and lifts the two pockets either
-# side 0.2× → 0.3×, funding the tier to ~95.40% (other modes ~95.70%, so cross-mode spread ≈0.30%).
-# Nothing else moves and the per-tier wincap (200×) is unchanged.
+# compliance floor. The 1-ball board therefore PAYS the centre and lifts the two pockets either side
+# 0.2× → 0.25×, funding the tier to 95.657%. Nothing else moves, so the advertised max win is still the
+# board's top pocket (100×, hit 2/16384).
+#
+# ⚠️ THIS BOARD *IS* THE TIER'S RTP. onedrop has no feature to fund it and no quota to tune (see
+# `BONUS_IN_DROP_RATE`), so `board_ev_per_ball(1)` is EXACTLY what the mode returns — the one mode whose
+# RTP is set by pocket values instead of by a lever. It was CENTRE 0.1× / sides 0.3× (EV 95.396%), which
+# left onedrop 0.30% under the 95.70% every other mode is tuned to; combined with the ±0.2-0.3% sampling
+# noise on the published low-tier LUTs, that systematic gap is what pushed the cross-mode RTP spread over
+# Stake's 0.50% limit (measured 0.66%). Centre 0.2× / sides 0.25× is the closest the board gets to
+# TARGET_RTP on values that still render as clean labels: 95.657%, i.e. 0.043% under target, and now the
+# smallest term in the spread rather than the largest. Re-check with `rtp_audit.py` (it reports this tier
+# in closed form) after ANY change to these values.
 # ⚠️ The centre is NOT flagged `hitSpinSlot` on this tier (there is no spin meter to feed), so its
 # multiplier is paid normally. Mirror in apps/plinko game-logic/boardMultipliers.ts.
-ONE_BALL_BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.3, 0.1, 0.3, 0.4, 1.5, 5, 20, 50, 100]
+ONE_BALL_BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.25, 0.2, 0.25, 0.4, 1.5, 5, 20, 50, 100]
 
 # Serialized on plinkoDrop.difficulty for RGS / published math compatibility.
 DEFAULT_VARIANT_ID = 0
@@ -135,14 +145,23 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # number painted on the wheel art (QA 2026-07-27: landed on 80, won 70). That extra entry EV alone puts
 # the 10-ball tier at 96.198% on its NATURAL meter fire rate — i.e. with a ZERO quota, so the quota lever
 # bottoms out and CANNOT pull it back to target. The 10-ball `BONUS_METER_TIER` max was therefore raised
-# 6 → 7 (rarer natural fire) to reopen headroom; with that, these quotas re-solve tiers 10/20/50 to
-# exactly 95.700% (spread 0.000%) with wincap-hit ≈1.4–9.5% of bonuses (advertised max win easily
-# achievable). Re-confirm with a full `make run` LUT before publishing.
+# 6 → 7 (rarer natural fire) to reopen headroom.
+#
+# ⚠️ RE-SOLVED WITH `rtp_audit.py` (was 0.00283 / 0.00253 / 0.01350). Those values came from
+# `measure_tuning_capped.py`, which AVERAGES SAMPLED PAYOUTS: at its sample counts the board's 100×
+# corners leave ~0.2% of noise on the normal stratum's mean, and this lever is ~11 RTP points per 0.001
+# of quota, so that noise mis-solved the low tiers badly — the published LUTs came out tendrop 95.01% and
+# twentydrop 95.38%, and that miss is most of the 0.66% cross-mode RTP spread Stake rejected (limit
+# 0.50%). `rtp_audit.py` takes the fire rates from the binomial in CLOSED FORM and folds the board in as
+# its exact analytic EV × the ball count, so it reads each tier to ±0.01%; it puts the OLD quotas at
+# 95.233% / 95.439% / 95.739%, confirmed against a 400k/200k brute-force mixture sim. These quotas are
+# its solution for 95.700%. Re-solve with `rtp_audit.py`, NOT `measure_tuning_capped.py`, after any
+# change to the bonus, the ladder, the entry wheel or `BONUS_METER_TIER`.
 BONUS_IN_DROP_RATE: dict[int, float] = {
     1: 0.0,  # FEATURE-FREE tier: no bonus stratum is published for onedrop at all.
-    10: 0.00283,
-    20: 0.00253,
-    50: 0.01350,
+    10: 0.00323,
+    20: 0.00298,
+    50: 0.01333,
 }
 
 
@@ -335,8 +354,10 @@ def bonus_level_balls(level: int) -> int:
 # (overriding the random bonus wheel), then the usual in-bonus level-up / chain hits add MORE balls on
 # top — so the "roulette-won" balls combine with the bought balls (total = entry + level-up balls).
 # cost is ×bet-per-ball (a Stake mode's cost is ALWAYS ×amount, never ×total-bet), taken straight from
-# the Crimson Plinko rule-set PDF (80/100/150/250). Because the cost is FIXED to the PDF, the
-# `entry_balls` are TUNED so RTP = mean(min(bonus_payout, wincap)) / cost ≈ TARGET_RTP.
+# the Crimson Plinko rule-set PDF (80/100/150/250). Because the cost is FIXED to the PDF, `entry_balls`
+# (coarse) and `peg_hit_prob` (fine) are TUNED so RTP = mean(min(bonus_payout, wincap)) / cost ≈
+# TARGET_RTP. `entry_balls` is a COARSE lever only: one ball is worth ~1.1% RTP on the standard tier
+# (0.896 / 80), so it cannot land a tier on target by itself — that is `peg_hit_prob`'s job.
 #
 # GATE-THE-CLIMB (`peg_hit_prob`, buy-only): with the ×10 exponential ladder a large FIXED entry batch
 # self-sustains the cascade — on the shared escalating bar it runs away to level 9 (~5,100 balls, e.g.
@@ -347,15 +368,34 @@ def bonus_level_balls(level: int) -> int:
 # distribution (mean level 1.14–1.84, level 9 ≪0.01% of buys), one consistent rule on screen.
 # The payout is dominated by the entry balls' own board EV (~0.896 each), so `entry_balls` sets the coarse
 # RTP and `peg_hit_prob` trims it to TARGET_RTP (≈3–4 RTP points per 0.01 of probability). `head_start` is
-# 0. `wincap` sits at each tier's ORGANIC (corner-luck + shallow-level) payout tail so the advertised max
-# win is reachably produced (~1/1.3k–1/6.5k in the 200k buy sims) while barely clipping EV. One published
-# mode per tier, `buy{key}`. Mirror in apps/plinko game/config.ts + game/plinkoBetMode.ts.
-# Tuned via verify_buybonus.py; pin via run.py + compliance_report.py.
+# 0. `wincap` sits inside each tier's ORGANIC (corner-luck + shallow-level) payout tail so the advertised
+# max win is reachably produced while barely clipping EV. One published mode per tier, `buy{key}`. Mirror
+# in apps/plinko game/config.ts + game/plinkoBetMode.ts.
+# Solve with rtp_audit.py; pin via run.py + compliance_report.py.
+# ⚠️ THE WINCAPS ARE ADVERTISED FIGURES, RAISED/LOWERED ON REQUEST (was 260/290/330/480). Each new cap
+# still sits inside the tier's ORGANIC payout tail, so the advertised max win stays achievable — measured
+# hit rates at n=70,000/tier: 250× 1/3,043, 300× 1/10,000, 350× 1/2,692, 500× 1/3,043, all far above the
+# 1/20,000,000 floor, with raw maxima of 294/336/436/598 seen above each cap. Moving a cap by ±10-20×
+# barely moves RTP (it only re-prices the ~0.01-0.04% of bonuses that reach it), so the `peg_hit_prob`
+# column below is what actually holds each tier at TARGET_RTP.
+#
+# ⚠️ `peg_hit_prob` RE-SOLVED WITH `rtp_audit.py` (was 0.0447/0.0292/0.0252/0.0283, which measured
+# 95.645/95.668/95.718/95.645% at these caps). The lever is ~3.2 RTP points per 0.001 and the response is
+# CONVEX in probability (the ×10 award cascade accelerates), so solve it from the LOCAL derivative at the
+# current value — a straight-line fit across a ±8% sweep reads ~0.07% off on the superfury tier. These
+# values measure 95.689 / 95.659 / 95.706 / 95.762% (rtp_audit.py, n=150,000/tier).
+#
+# ⚠️ DON'T CHASE THE LAST ~0.05% HERE. `rtp_audit.py`'s printed SE only covers the ball-count variance,
+# and a bought bonus's ball count is HEAVY-TAILED (a rare level 5-6 adds 160-320 balls at once), so the
+# sample variance understates the true one and the real uncertainty per buy tier is ~±0.05%. Two
+# independent reads of superfury 0.00016 apart in probability disagreed by 0.12% for that reason. The
+# tier-to-tier residual above is inside that band; re-solving on it just moves noise around.
+# Re-run `rtp_audit.py` after any nudge; do not interpolate.
 BUY_BONUS_TIER_DEFS: list[dict] = [
-    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 260.0, "head_start": 0.0, "peg_hit_prob": 0.0447},
-    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 290.0, "head_start": 0.0, "peg_hit_prob": 0.0292},
-    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 330.0, "head_start": 0.0, "peg_hit_prob": 0.0252},
-    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 480.0, "head_start": 0.0, "peg_hit_prob": 0.0283},
+    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 250.0, "head_start": 0.0, "peg_hit_prob": 0.04487},
+    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 300.0, "head_start": 0.0, "peg_hit_prob": 0.02931},
+    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 350.0, "head_start": 0.0, "peg_hit_prob": 0.02515},
+    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 500.0, "head_start": 0.0, "peg_hit_prob": 0.02846},
 ]
 
 # Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
@@ -414,13 +454,15 @@ def buy_bonus_peg_hit_prob(tier_key: str) -> float:
 # per-drop trigger bar (`BONUS_METER_TIER`), and their bonus depth (mean level ≈2.70) is the tuned
 # reference the ladder was designed around. ⚠️ The ×10 award ladder self-sustains just above this
 # value — at p = 0.25 the earned bonus explodes (mean payout 125 → 1,519, P(level 9) 0.001% → 29.7%),
-# so never interpolate a base-mode increase; re-measure it (measure_tuning_capped.py).
+# so never interpolate a base-mode increase; re-measure it (rtp_audit.py).
 #
 # BUY MODES take a much lower value (see BUY_BONUS_TIER_DEFS) because their entry batch is 72–239
-# FIXED balls; at 0.18 they would run away to level 9. Verified against the REAL simulate_bonus_round
-# (verify_buybonus.py, n=150k/tier): buystandard 95.64%, buyenhanced 95.76%, buypremium 95.74%,
-# buysuperfury 95.68% — spread 0.121%, max-win hit 1/1,136–1/6,803, largest book 299 balls.
-# The lever is ~3-4 RTP points per 0.01 of probability; re-run verify_buybonus.py after any nudge.
+# FIXED balls; at 0.18 they would run away to level 9. Measured through the REAL simulate_bonus_round
+# (rtp_audit.py, n=150k/tier): buystandard 95.689%, buyenhanced 95.659%, buypremium 95.706%,
+# buysuperfury 95.762% — mean level 1.15–1.85, largest book 299 balls, and every advertised max win
+# reachable (1/2,273–1/11,494 of buys). ALL EIGHT published modes now span 95.657%–95.762%, a 0.104%
+# cross-mode spread against Stake's 0.50% limit (it was 0.66%).
+# The lever is ~3-4 RTP points per 0.01 of probability; re-run rtp_audit.py after any nudge.
 BONUS_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
     **{bet_mode_for_balls_per_drop(balls): BONUS_PEG_HIT_PROB for balls in BALLS_PER_DROP_OPTIONS},
     **{

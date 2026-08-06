@@ -1,7 +1,13 @@
-"""Authoritative buy-bonus RTP check: sample the REAL GameState.simulate_bonus_round with each tier's
-configured entry_balls / head_start / peg_hit_prob (from plinko_data.BUY_BONUS_TIER_DEFS), cap at the
-tier wincap, and report RTP + cap-hit + max + level depth. Confirms the tuning before the full run.py
-LUT build.
+"""Buy-bonus RTP check: sample the REAL GameState.simulate_bonus_round with each tier's configured
+entry_balls / head_start / peg_hit_prob (from plinko_data.BUY_BONUS_TIER_DEFS), cap at the tier wincap,
+and report RTP + cap-hit + max + level depth.
+
+⚠️ SUPERSEDED FOR SOLVING `peg_hit_prob` — USE `rtp_audit.py`. This averages the SAMPLED payout, whose
+variance is dominated by the board's 100× corner pockets, so an n=30k read carries ~0.2% of noise per
+tier — wider than the whole 0.50% cross-mode compliance band. `rtp_audit.py` folds the board in as its
+exact analytic EV × the sampled BALL COUNT (which has no such spikes) and reads the same tiers to ±0.02%.
+This one is still the useful cross-check that the shipped `simulate_bonus_round` behaves, and the place
+to read raw level depth / balls-per-book / cap-hit.
 
 Every mode now climbs the SAME level-up ladder (plinko_data.BONUS_LEVELUP_PEG_HITS_BY_LEVEL); each buy
 tier is held at TARGET_RTP by its own coin-peg probability instead, so `peg_hit_prob` is the column to
@@ -57,13 +63,14 @@ def main():
             lvl2 += 1 if lvl >= 2 else 0
         rtp = statistics.mean(caps) / cost
         rtps.append(rtp)
-        print(f"{t['key']:>10} {entry:>5} {prob:>8.4f} {cost:>5.0f} {cap:>5.0f} {rtp*100:>6.2f}% "
+        print(f"{t['key']:>10} {entry:>5} {prob:>8.5f} {cost:>5.0f} {cap:>5.0f} {rtp*100:>6.2f}% "
               f"{caphit/n*100:>8.4f}% {maxpm:>7.1f} {lvl_tot/n:>6.2f} {lvl2/n*100:>5.1f}% "
               f"{balls_tot/n:>9.1f} {balls_max:>9}")
     if rtps:
         print(f"\nbuy-mode spread = {(max(rtps)-min(rtps))*100:.3f}%  "
               f"(min {min(rtps)*100:.2f}%  max {max(rtps)*100:.2f}%)")
-        print("base modes are ~95.59-95.80%; all 8 must sit within a 1.00% band.")
+        print("Target is TARGET_RTP on every tier; all 8 published modes must sit within 0.50%.")
+        print("This read carries ~0.2%/tier of sampling noise at n=30k — solve with rtp_audit.py.")
 
 
 if __name__ == "__main__":
