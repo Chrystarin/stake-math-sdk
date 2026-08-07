@@ -72,8 +72,9 @@ class GameCalculations(Executables):
         for _ in range(balls_per_drop):
             rate_index = self.sample_rate_index(row_count, num_slots)
             # `hitSpinSlot` means "this ball fed the free-spin meter" — only on tiers that HAVE one. The
-            # payout always comes from the board: the shared board pays 0 at the centre anyway, while the
-            # 1-ball board pays its centre value (that tier has no spin meter to feed).
+            # payout always comes from the board and is unaffected by the flag: every board pays 0 at the
+            # centre, so a 1-ball centre land is worth the same 0 as elsewhere; it just isn't REPORTED as
+            # a meter hit, because that tier has no meter to feed.
             hit_spin_slot = spin_pocket and self.is_spin_slot(rate_index, num_slots)
             multiplier = coeffs[rate_index]
             hit_bonus_peg = py_random.random() < peg_prob
@@ -110,8 +111,8 @@ class GameCalculations(Executables):
             outcomes[idx]["hitBonusPeg"] = True
 
     def _drop_win_from_outcomes(self, outcomes: list[dict], stake_per_ball: float) -> float:
-        """Sum slot payouts for a drop. Each ball's `multiplier` already comes from its tier's board, so
-        spin-pocket balls carry 0 on the tiers that have a spin meter and the 1-ball centre pays."""
+        """Sum slot payouts for a drop. Each ball's `multiplier` already comes from its tier's board, and
+        every board's centre is 0, so centre lands contribute nothing on every tier."""
         stake = max(0.0, float(stake_per_ball))
         total = 0.0
         for outcome in outcomes:

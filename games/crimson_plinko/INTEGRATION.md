@@ -100,7 +100,7 @@ All in `plinko_data.py`, mirrored to the FE config by `run.py:write_plinko_fe_co
 
 **RTP is tuned for compliance (90.0%–96.70%, cross-mode variance < 1%).** Every mode reads ~`TARGET_RTP` (95.7%, `plinko_data.py`):
 - **Feature tiers (10 / 20 / 50)** pay the shared board's `0.89635×`/ball (`BOARD_SLOT_MULTIPLIERS`); the free in-drop features — folded into the same book (see *Feature triggering* below) — make up the remaining ~6 points to `TARGET_RTP` on every tier.
-- **`onedrop`** is feature-free, so its RTP *is* its board: `COEFFICIENT_SETS_BY_BALLS[1]` at `0.95657×`/ball (`declared_rtp_for_balls(1)`), 0.043% under target and clear of the 90% floor without any feature funding.
+- **`onedrop`** is feature-free, so its RTP *is* its board: `COEFFICIENT_SETS_BY_BALLS[1]` at `0.95745×`/ball (`declared_rtp_for_balls(1)`), 0.045% over target and clear of the 90% floor without any feature funding.
 - **Buy-bonus modes** are EV-priced: each tier's `cost` (80 / 100 / 150 / 250 × bet-per-ball) is fixed by the rule-set PDF, and its `peg_hit_prob` is tuned against its fixed `entry_balls` so the mode also lands at ~`TARGET_RTP`.
 
 To re-tune, change `BOARD_SLOT_MULTIPLIERS` (base EV) and/or `TARGET_RTP`, then re-solve the per-tier `BONUS_IN_DROP_RATE` quotas and the buys' `peg_hit_prob` with **`rtp_audit.py`**. Changing `FREE_SPIN_SEGMENTS` / `BONUS_WHEEL_FREE_BALLS` / `BONUS_LEVEL_BALLS` moves real EV now that the features are free and folded — the quota (and, if it bottoms out at zero, the tier's `BONUS_METER_TIER` max) is the lever that absorbs it.
@@ -170,7 +170,7 @@ branch in `game_calculations.build_feature_meter_events` is an **unreachable** s
 for a hypothetical future tier that pairs a quota with `bonus_in_drop=False`.
 
 **Funding.** The shared board pays `0.89635×`/ball; the folded free features lift every feature tier to
-`TARGET_RTP` (95.7%). `onedrop` has no features and plays its own board at `0.95657×`/ball.
+`TARGET_RTP` (95.7%). `onedrop` has no features and plays its own board at `0.95745×`/ball.
 
 **Client wiring.** `gameOrchestrator.ts:maybeAutoFireFeatureTrigger` is a retained **no-op** — nothing
 auto-fires, the client just animates the book's events. `plinkoBetMode.ts:plinkoActiveBetMode` still
@@ -206,8 +206,8 @@ Mirror the tier list in `apps/plinko/src/game/plinkoBetMode.ts:BUY_BONUS_TIERS`.
 `basegame_bonus_balls_1` stratum entirely (`Distribution` asserts `quota > 0`). An `onedrop` book can
 never contain `bonusRoulette` / `bonusRound` / `freeSpinTrigger`, and the client enforces the same rule
 independently (`isSingleBallMode` in `apps/plinko/src/game/gameOrchestrator.ts`). Because nothing but the
-board pays there, that tier plays its own board (`COEFFICIENT_SETS_BY_BALLS[1]`: center 0.2×, the two
-pockets either side 0.25×) for an RTP of 95.657% — its pocket values ARE its RTP, so they are the only
+board pays there, that tier plays its own board (`COEFFICIENT_SETS_BY_BALLS[1]`: the two 1.5× pockets
+pay 2.0× instead) for an RTP of 95.745% — its pocket values ARE its RTP, so they are the only
 lever it has — and its advertised max win is the top pocket, 100×.
 
 Those are **all** the criteria a mode publishes — there are no meter-start strata

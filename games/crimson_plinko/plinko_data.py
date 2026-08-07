@@ -25,24 +25,31 @@ import math
 BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.2, 0, 0.2, 0.4, 1.5, 5, 20, 50, 100]
 
 # 1-BALL BOARD (onedrop only). That tier is FEATURE-FREE — no free spin, no bonus (see
-# BONUS_IN_DROP_RATE) — so the centre pocket, which exists only to fill the free-spin meter, would be a
-# dead 0× slot hit ~20.9% of the time, leaving onedrop at the bare board EV (~89.6%): BELOW the 90.00%
-# compliance floor. The 1-ball board therefore PAYS the centre and lifts the two pockets either side
-# 0.2× → 0.25×, funding the tier to 95.657%. Nothing else moves, so the advertised max win is still the
-# board's top pocket (100×, hit 2/16384).
+# BONUS_IN_DROP_RATE) — so nothing but the board funds it, and the shared table's 0.89635×/ball sits
+# BELOW the 90.00% compliance floor. The 1-ball board therefore pays its two 1.5× pockets 2.0× instead.
+# They are hit 12.219% of the time (2*C(14,4)/2^14), so that one 0.5 step is worth +6.110 points and
+# lands the tier at 95.745%. Nothing else moves: the centre still pays 0× and the advertised max win is
+# still the board's top pocket (100×, hit 2/16384).
 #
 # ⚠️ THIS BOARD *IS* THE TIER'S RTP. onedrop has no feature to fund it and no quota to tune (see
 # `BONUS_IN_DROP_RATE`), so `board_ev_per_ball(1)` is EXACTLY what the mode returns — the one mode whose
 # RTP is set by pocket values instead of by a lever. It was CENTRE 0.1× / sides 0.3× (EV 95.396%), which
 # left onedrop 0.30% under the 95.70% every other mode is tuned to; combined with the ±0.2-0.3% sampling
 # noise on the published low-tier LUTs, that systematic gap is what pushed the cross-mode RTP spread over
-# Stake's 0.50% limit (measured 0.66%). Centre 0.2× / sides 0.25× is the closest the board gets to
-# TARGET_RTP on values that still render as clean labels: 95.657%, i.e. 0.043% under target, and now the
-# smallest term in the spread rather than the largest. Re-check with `rtp_audit.py` (it reports this tier
-# in closed form) after ANY change to these values.
-# ⚠️ The centre is NOT flagged `hitSpinSlot` on this tier (there is no spin meter to feed), so its
-# multiplier is paid normally. Mirror in apps/plinko game-logic/boardMultipliers.ts.
-ONE_BALL_BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 1.5, 0.4, 0.25, 0.2, 0.25, 0.4, 1.5, 5, 20, 50, 100]
+# Stake's 0.50% limit (measured 0.66%). Re-check with `rtp_audit.py` (it reports this tier in closed
+# form) after ANY change to these values.
+#
+# ⚠️ WHY THE 1.5× POCKETS AND NOT THE MIDDLE. The three centre pockets look like the natural dial, but
+# they are hit 20.947% (centre) and 36.658% (the pair either side), so ONE DECIMAL PLACE there is worth
+# 2.09% and 3.67% of RTP — a 2-4 point instrument for a 0.30% correction. No one-decimal pair lands
+# within 1.2% of target (the old 0.1/0.3 board was itself the best of them), and the closest clean pair
+# at all, 0.25×/0.2×, needs a two-decimal pocket label. The 1.5× pockets are hit 3x less often, so they
+# resolve 3x finer. This is also the SMALLEST possible departure from the shared board — two pockets,
+# one decimal, and the whole middle of the board keeps the meaning it has on every other tier.
+# ⚠️ The centre is NOT flagged `hitSpinSlot` on this tier (there is no spin meter to feed). It pays the
+# board's 0× either way, so the flag's absence is invisible in the payout — keep it that way regardless:
+# a tier with no meter must not report meter hits. Mirror in apps/plinko game-logic/boardMultipliers.ts.
+ONE_BALL_BOARD_SLOT_MULTIPLIERS = [100, 50, 20, 5, 2.0, 0.4, 0.2, 0, 0.2, 0.4, 2.0, 5, 20, 50, 100]
 
 # Serialized on plinkoDrop.difficulty for RGS / published math compatibility.
 DEFAULT_VARIANT_ID = 0
@@ -460,7 +467,7 @@ def buy_bonus_peg_hit_prob(tier_key: str) -> float:
 # FIXED balls; at 0.18 they would run away to level 9. Measured through the REAL simulate_bonus_round
 # (rtp_audit.py, n=150k/tier): buystandard 95.689%, buyenhanced 95.659%, buypremium 95.706%,
 # buysuperfury 95.762% — mean level 1.15–1.85, largest book 299 balls, and every advertised max win
-# reachable (1/2,273–1/11,494 of buys). ALL EIGHT published modes now span 95.657%–95.762%, a 0.104%
+# reachable (1/2,273–1/11,494 of buys). ALL EIGHT published modes now span 95.659%–95.762%, a 0.103%
 # cross-mode spread against Stake's 0.50% limit (it was 0.66%).
 # The lever is ~3-4 RTP points per 0.01 of probability; re-run rtp_audit.py after any nudge.
 BONUS_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
@@ -489,8 +496,9 @@ def spin_in_drop_for_balls(balls_per_drop: int) -> bool:
 
 def spin_pocket_active_for_balls(balls_per_drop: int) -> bool:
     """True where the centre pocket is the SPIN pocket (fills the free-spin meter, pays the board's 0×).
-    False on the 1-ball tier, which has no free-spin meter — there the centre is an ordinary paying
-    pocket (ONE_BALL_BOARD_SLOT_MULTIPLIERS) and balls landing in it are NOT flagged `hitSpinSlot`."""
+    False on the 1-ball tier, which has no free-spin meter, so balls landing centre there are NOT
+    flagged `hitSpinSlot`. The payout is identical either way — that board's centre is 0 too — but a
+    tier with no meter must not report meter hits."""
     return spin_in_drop_for_balls(balls_per_drop)
 
 

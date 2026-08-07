@@ -89,8 +89,8 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
         fe = json.load(f)
     fe["coefficientSets"] = COEFFICIENT_SETS
     # Per-balls-per-drop board override (only tiers that differ from `coefficientSets` are listed). The
-    # 1-ball tier is feature-free, so its centre pocket is an ordinary paying slot instead of the 0× spin
-    # pocket. Mirror in apps/plinko game-logic/boardMultipliers.ts BOARD_SLOT_MULTIPLIERS_BY_BALLS.
+    # 1-ball tier is feature-free, so nothing but the board funds it; its two 1.5× pockets pay 2.0×
+    # instead. Mirror in apps/plinko game-logic/boardMultipliers.ts BOARD_SLOT_MULTIPLIERS_BY_BALLS.
     fe["coefficientSetsByBalls"] = {
         str(balls): sets for balls, sets in COEFFICIENT_SETS_BY_BALLS.items()
     }
@@ -159,9 +159,10 @@ if __name__ == "__main__":
     # ⚠️ SIM COUNTS ARE A COMPLIANCE INPUT, NOT JUST A RUNTIME KNOB. Stake reads each mode's RTP off the
     # PUBLISHED LUT (mean payout / cost, uniform weights — see `make_lookup_tables`), so what it grades is
     # an ESTIMATE with standard error sd_book/sqrt(n). Measured per-book sd of payout/cost is onedrop
-    # 3.24, tendrop 1.31, twentydrop 0.98, fiftydrop 0.62, buys 0.22-0.38 (the 1-ball tier is worst
+    # 3.27, tendrop 1.31, twentydrop 0.98, fiftydrop 0.62, buys 0.22-0.38 (the 1-ball tier is worst
     # because its whole book is one ball, and a lone 100x corner moves the mean a long way — a 200k-sim
-    # onedrop run has been observed reading 96.04% against a true 95.657%).
+    # onedrop run has been observed landing 0.38% off its board's exact EV, which is only half of the
+    # 0.73% standard error it carries at that count).
     #
     # At the previous counts (1M/400k/240k/400k + 200k buys) the SEs were 0.32%/0.21%/0.20%/0.10% and
     # ~0.05-0.09%, which puts the RANGE across 8 independent estimates at a mean of 0.48% and gives a
