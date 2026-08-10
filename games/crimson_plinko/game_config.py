@@ -20,10 +20,13 @@ from plinko_data import (
     bonus_peg_hit_prob,
     bonus_possible_for_balls,
     buy_bonus_mode_name,
+    buy_bonus_wincap,
     declared_rtp_for_balls,
     scaled_bonus_meter_start,
     scaled_spin_meter_start,
     spin_in_drop_for_balls,
+    test_guaranteed_max_level,
+    test_top_slot_prob,
     wincap_for_balls,
 )
 
@@ -84,6 +87,8 @@ class GameConfig(Config):
             buy_entry_balls: int = 0,
             buy_levelup_head_start: float = 0.0,
             peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+            top_slot_prob: float = 0.0,
+            guaranteed_max_level: bool = False,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -106,6 +111,12 @@ class GameConfig(Config):
                 # (`bonus_levelup_pegs`); this is how fast it gets the hits, and it is the RTP lever
                 # that keeps each mode compliant under that shared ladder.
                 "peg_hit_prob": float(peg_hit_prob),
+                # ⚠️ TEST-ONLY levers (plinko_data.TEST_EASY_BONUS_MODES) — 0 / False on every mode that
+                # is not listed there, which is how the tuned math is restored (empty the dict).
+                # `top_slot_prob`: per-ball chance of being dropped straight into a 100× corner pocket.
+                # `guaranteed_max_level`: every bonus climbs to MAX_BONUS_LEVEL (100% level-up, 100% max).
+                "top_slot_prob": float(top_slot_prob),
+                "guaranteed_max_level": bool(guaranteed_max_level),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -132,6 +143,9 @@ class GameConfig(Config):
             rate = bonus_in_drop_rate(balls) if bonus_possible_for_balls(balls) else 0.0
             normal_quota = max(0.0, 1.0 - rate)
             peg_prob = bonus_peg_hit_prob(mode_name)
+            # TEST-ONLY (off unless this mode is in plinko_data.TEST_EASY_BONUS_MODES).
+            top_prob = test_top_slot_prob(mode_name)
+            max_level = test_guaranteed_max_level(mode_name)
 
             distributions = [
                 # Normal paid drop — the per-drop bonus meter (bonus_in_drop) fires the bonus when
@@ -146,6 +160,8 @@ class GameConfig(Config):
                         spin_in_drop=spin_in_drop,
                         bonus_in_drop=bonus_in_drop,
                         peg_hit_prob=peg_prob,
+                        top_slot_prob=top_prob,
+                        guaranteed_max_level=max_level,
                     ),
                 ),
             ]
@@ -166,6 +182,8 @@ class GameConfig(Config):
                             bonus_in_drop=bonus_in_drop,
                             force_bonus=True,
                             peg_hit_prob=peg_prob,
+                            top_slot_prob=top_prob,
+                            guaranteed_max_level=max_level,
                         ),
                     ),
                 )
@@ -202,7 +220,7 @@ class GameConfig(Config):
                     name=name,
                     cost=float(tier["cost"]),
                     rtp=self.rtp,
-                    max_win=float(tier["wincap"]),
+                    max_win=buy_bonus_wincap(tier["key"]),
                     auto_close_disabled=False,
                     is_feature=False,
                     is_buybonus=True,
@@ -220,6 +238,14 @@ class GameConfig(Config):
                                 # per-ball coin-peg probability is what keeps the big fixed entry batch
                                 # from running the ×10 award cascade away to level 9.
                                 peg_hit_prob=bonus_peg_hit_prob(name),
+                                # ⚠️ TEST-ONLY, branch `plinko_easy_bonus_level`: `buysuperfury` is
+                                # listed in plinko_data.TEST_EASY_BONUS_MODES, so its bonus reaches
+                                # MAX_BONUS_LEVEL 100% of the time and half its balls land in a 100×
+                                # pocket. Its tuned `peg_hit_prob` above is therefore inert (the
+                                # guaranteed climb overrides it) and the mode's RTP is not compliant.
+                                # Every other buy tier gets 0.0 / False and keeps its real math.
+                                top_slot_prob=test_top_slot_prob(name),
+                                guaranteed_max_level=test_guaranteed_max_level(name),
                                 # In-bonus free spin stays on (off only on 1-ball); no in-drop spin/bonus
                                 # since the buy drop is empty.
                                 spin_in_drop=False,

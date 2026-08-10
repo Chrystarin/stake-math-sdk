@@ -55,6 +55,11 @@ class GameState(GameStateOverride):
         # the lever that holds each mode at TARGET_RTP under that shared ladder. Applies to the paid
         # drop's trigger meter AND to the bonus round's energy meter.
         peg_hit_prob = float(conditions.get("peg_hit_prob", BONUS_PEG_HIT_PROB))
+        # ⚠️ TEST-ONLY levers (plinko_data.TEST_EASY_BONUS_MODES; 0.0 / False on every untuned-off mode):
+        # `top_slot_prob` drops that share of balls straight into a 100× corner pocket, and
+        # `guaranteed_max_level` makes every bonus climb to MAX_BONUS_LEVEL. Neither is compliant math.
+        top_slot_prob = float(conditions.get("top_slot_prob", 0.0))
+        guaranteed_max_level = bool(conditions.get("guaranteed_max_level", False))
 
         self.repeat = True
         while self.repeat:
@@ -83,6 +88,7 @@ class GameState(GameStateOverride):
                     balls_per_drop=balls_per_drop,
                     stake_per_ball=stake_per_ball,
                     peg_hit_prob=peg_hit_prob,
+                    top_slot_prob=top_slot_prob,
                 )
             # When the bonus is FORCED this round (quota) on a meter-tier (10/20/50), make enough of the
             # drop's balls hit coin pegs so the bonus meter fills 0→max from REAL hits (no snap) — the
@@ -116,6 +122,8 @@ class GameState(GameStateOverride):
                 buy_entry_balls=buy_entry_balls,
                 buy_levelup_head_start=buy_levelup_head_start,
                 peg_hit_prob=peg_hit_prob,
+                top_slot_prob=top_slot_prob,
+                guaranteed_max_level=guaranteed_max_level,
             )
             total_win += feature_win
 

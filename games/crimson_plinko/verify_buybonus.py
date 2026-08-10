@@ -25,6 +25,9 @@ from plinko_data import (
     BUY_BONUS_BALLS_PER_DROP_REF,
     BUY_BONUS_TIER_DEFS,
     TARGET_RTP,
+    buy_bonus_mode_name,
+    test_guaranteed_max_level,
+    test_top_slot_prob,
 )
 
 ROW = 14
@@ -43,12 +46,18 @@ def main():
     for t in BUY_BONUS_TIER_DEFS:
         entry = int(t["entry_balls"]); cost = float(t["cost"]); cap = float(t["wincap"])
         hs = float(t.get("head_start", 0.0)); prob = float(t.get("peg_hit_prob", 0.0))
+        # ⚠️ TEST-ONLY overrides (plinko_data.TEST_EASY_BONUS_MODES) — pass them so this reads what the
+        # mode ACTUALLY publishes. A tier with `guaranteed_max_level` is NOT tuned to TARGET_RTP and its
+        # row below (RTP in the hundreds of %, every book at the cap) is expected, not a regression.
+        mode = buy_bonus_mode_name(t["key"])
+        top = test_top_slot_prob(mode); guar = test_guaranteed_max_level(mode)
         caps = []; caphit = 0; maxpm = 0.0; balls_tot = 0; balls_max = 0
         lvl_tot = 0; lvl2 = 0
         for _ in range(n):
             events, win, lvl = gs.simulate_bonus_round(
                 row_count=ROW, stake_per_ball=STAKE, balls_per_drop=BUY_BONUS_BALLS_PER_DROP_REF,
                 entry_balls_override=entry, levelup_head_start=hs, peg_hit_prob=prob,
+                top_slot_prob=top, guaranteed_max_level=guar,
             )
             pm = win / STAKE
             c = min(pm, cap)

@@ -36,6 +36,7 @@ from plinko_data import (
     FREE_SPIN_SEGMENTS,
     FREE_SPIN_WEIGHTS,
     TARGET_RTP,
+    TEST_EASY_BONUS_MODES,
     bet_mode_for_balls_per_drop,
     board_ev_per_ball,
     bonus_in_drop_for_balls,
@@ -267,6 +268,16 @@ def main() -> None:
     wheel_cash, p_wheel_bonus = free_spin_cash_ev()
     print(f"free-spin wheel: mean cash {wheel_cash:.4f}x   P(BONUS segment) {p_wheel_bonus:.4f}")
     print(f"centre-pocket P {centre_pocket_prob():.6f}   coin-peg P {BONUS_PEG_HIT_PROB}\n")
+    if TEST_EASY_BONUS_MODES:
+        # This audit prices a bonus as board_EV × E[ball count] and takes the level ladder as tuned. A
+        # TEST mode breaks BOTH assumptions (forced 100× pockets ⇒ the analytic board EV is wrong;
+        # guaranteed max level ⇒ the ladder is bypassed), so its row below is meaningless — as is the
+        # cross-mode spread that includes it. Empty plinko_data.TEST_EASY_BONUS_MODES to audit for real.
+        # ASCII only: the Windows console runs cp1252 and raises UnicodeEncodeError on symbols.
+        print("!! TEST-ONLY OVERRIDES ACTIVE (plinko_data.TEST_EASY_BONUS_MODES): "
+              f"{', '.join(sorted(TEST_EASY_BONUS_MODES))}")
+        print("!! Those modes are NOT modelled by this audit and are NOT compliant - ignore their rows "
+              "and the spread.\n")
 
     rows = []
 

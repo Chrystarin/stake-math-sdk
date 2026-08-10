@@ -144,6 +144,20 @@ def output_lookup_and_force_files(
                 gamestate.output_files.get_temp_multi_thread_name(betmode, thread, repeat_index, compress)
             )
 
+    # FAIL FAST ON A DEAD WORKER. `run_multi_process_sims` joins its children but does NOT propagate
+    # their exceptions, so a worker that dies (OOM-killed, or — on Windows, where multiprocessing SPAWNS
+    # and each child re-imports the main module — killed by an edit to a source file mid-run) leaves its
+    # temp book file missing or half-written. Merging regardless concatenates a TRUNCATED zstd frame into
+    # the published archive, which then fails ACP publish with ERR_INVALID_FORMAT far from the cause, and
+    # silently overwrites the previous good archive on the way. Check the set is complete first.
+    missing = [f for f in file_list if not os.path.isfile(f)]
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} of {len(file_list)} temp book files are missing for '{betmode}' — a sim "
+            f"worker died (its exception is above, printed by the child process). Refusing to merge: "
+            f"doing so would publish a corrupt archive. First missing: {missing[0]}. Re-run the sims."
+        )
+
     if compress:
         final_out = gamestate.output_files.get_final_book_name(betmode, True)
         compressor = zstd.ZstdCompressor()
@@ -187,6 +201,13 @@ def output_lookup_and_force_files(
             file_list.append(
                 gamestate.output_files.get_temp_force_name(betmode, thread, repeat_index),
             )
+
+    missing = [f for f in file_list if not os.path.isfile(f)]
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} of {len(file_list)} temp force files are missing for '{betmode}' — a sim "
+            f"worker died before writing them. Re-run the sims. First missing: {missing[0]}."
+        )
 
     for filename in file_list:
         force_chunk = ast.literal_eval(json.load(open(filename, "r", encoding="UTF-8")))

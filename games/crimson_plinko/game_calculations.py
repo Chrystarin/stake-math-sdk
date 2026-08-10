@@ -41,6 +41,13 @@ class GameCalculations(Executables):
     def is_spin_slot(self, rate_index: int, num_slots: int) -> bool:
         return rate_index == spin_slot_index(num_slots)
 
+    def top_slot_indices(self, coeffs: list[float]) -> list[int]:
+        """Pocket indices paying the board's HIGHEST multiplier (the two 100× corners)."""
+        if not coeffs:
+            return []
+        top = max(coeffs)
+        return [i for i, m in enumerate(coeffs) if m == top]
+
     def build_drop_outcomes(
         self,
         *,
@@ -49,6 +56,7 @@ class GameCalculations(Executables):
         stake_per_ball: float,
         tier_balls_per_drop: int = 0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+        top_slot_prob: float = 0.0,
     ) -> tuple[list[dict], float]:
         """Sample `balls_per_drop` balls; each carries pocket + feature flags.
 
@@ -58,7 +66,11 @@ class GameCalculations(Executables):
 
         `peg_hit_prob` is the PER-MODE coin-peg probability (`plinko_data.bonus_peg_hit_prob`). It is
         the RTP lever that lets every mode share one in-bonus level-up ladder; base modes pass the
-        default 0.18 and the buy modes pass their own much lower value."""
+        default 0.18 and the buy modes pass their own much lower value.
+
+        ⚠️ TEST-ONLY `top_slot_prob` (`plinko_data.TEST_EASY_BONUS_MODES`): with this probability the
+        ball is placed straight into one of the board's TOP-multiplier pockets (100×) instead of taking
+        the fair peg walk. 0 on every real mode — see the warning on TEST_EASY_BONUS_MODES."""
         tier = int(tier_balls_per_drop or balls_per_drop)
         coeffs = coefficients_for(row_count, tier)
         if not coeffs:
@@ -69,8 +81,13 @@ class GameCalculations(Executables):
         num_slots = len(coeffs)
         spin_pocket = spin_pocket_active_for_balls(tier)
         peg_prob = max(0.0, min(1.0, float(peg_hit_prob)))
+        top_prob = max(0.0, min(1.0, float(top_slot_prob)))
+        top_slots = self.top_slot_indices(coeffs) if top_prob > 0.0 else []
         for _ in range(balls_per_drop):
-            rate_index = self.sample_rate_index(row_count, num_slots)
+            if top_slots and py_random.random() < top_prob:
+                rate_index = py_random.choice(top_slots)
+            else:
+                rate_index = self.sample_rate_index(row_count, num_slots)
             # `hitSpinSlot` means "this ball fed the free-spin meter" — only on tiers that HAVE one. The
             # payout always comes from the board and is unaffected by the flag: every board pays 0 at the
             # centre, so a 1-ball centre land is worth the same 0 as elsewhere; it just isn't REPORTED as
@@ -128,6 +145,8 @@ class GameCalculations(Executables):
         entry_balls_override: int = 0,
         levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+        top_slot_prob: float = 0.0,
+        guaranteed_max_level: bool = False,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -152,9 +171,18 @@ class GameCalculations(Executables):
         out (gated by `spin_in_drop`, off on 1-ball) the free spin fires ONCE as a TRAILING
         `freeSpinTrigger` after all bonus balls — the client defers the wheel until the balls deplete and
         adds `stake × M` to the bonus total. Numeric-only (re-pick if it lands BONUS) to avoid recursion.
+
+        ⚠️ TEST-ONLY `guaranteed_max_level` (`plinko_data.TEST_EASY_BONUS_MODES`): the level-up threshold
+        collapses to ONE coin-peg hit and every bonus ball hits a coin peg, so the round climbs to
+        MAX_BONUS_LEVEL on the entry batch's first 8 balls — P(level up) = P(max level) = 100%, and the
+        full ×10 ladder (5,100 extra free balls) is awarded every round. Off on every real mode.
         """
         events: list[dict] = []
         feature_win = 0.0
+        force_max_level = bool(guaranteed_max_level)
+        if force_max_level:
+            # Every ball delivers a coin-peg hit, and one hit is a level (see threshold_for below).
+            peg_hit_prob = 1.0
         # BUY BONUS passes a FIXED starting-ball count (the bought tier's entry); otherwise draw the entry
         # from the random bonus wheel. Level-ups below still add MORE balls on top in either case.
         if entry_balls_override and entry_balls_override > 0:
@@ -167,6 +195,10 @@ class GameCalculations(Executables):
         # at low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). Identical
         # in every mode; the buy tiers are gated by their lower `peg_hit_prob` instead of by a taller bar.
         def threshold_for(lvl: int) -> int:
+            # TEST-ONLY: a single coin-peg hit clears any level (the client sizes each level's energy
+            # bar from this same value via `bonusRound.levelupPegs`, so the bar stays honest on screen).
+            if force_max_level:
+                return 1
             return bonus_levelup_pegs(lvl)
 
         spin_max = scaled_spin_meter_max(balls_per_drop)
@@ -195,6 +227,7 @@ class GameCalculations(Executables):
                 # Bonus balls play the PLAYER'S tier board, not a board keyed by the batch size.
                 tier_balls_per_drop=balls_per_drop,
                 peg_hit_prob=peg_hit_prob,
+                top_slot_prob=top_slot_prob,
             )
             feature_win += batch_win
             events.append(
@@ -245,6 +278,17 @@ class GameCalculations(Executables):
                     }
                 )
                 spin_meter = 0
+
+            # TEST-ONLY backstop: with `guaranteed_max_level` the peg walk above already levels up on
+            # every ball, but a batch shorter than the remaining ladder would still strand the round
+            # below MAX. Grant the next level outright once nothing else is queued, so the 100% promise
+            # holds for ANY entry-ball count.
+            if force_max_level and not pending and level < MAX_BONUS_LEVEL:
+                meter = 0
+                level += 1
+                extra = bonus_level_balls(level)
+                if extra > 0:
+                    pending.append((level, extra))
         return events, feature_win, level
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:
@@ -278,6 +322,8 @@ class GameCalculations(Executables):
         buy_entry_balls: int = 0,
         buy_levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+        top_slot_prob: float = 0.0,
+        guaranteed_max_level: bool = False,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -345,6 +391,8 @@ class GameCalculations(Executables):
                     stake_per_ball=stake_per_ball,
                     balls_per_drop=balls,
                     peg_hit_prob=peg_hit_prob,
+                    top_slot_prob=top_slot_prob,
+                    guaranteed_max_level=guaranteed_max_level,
                 )
                 events.extend(bonus_events)
                 feature_win += bonus_win
@@ -386,6 +434,8 @@ class GameCalculations(Executables):
                 entry_balls_override=buy_entry_balls,
                 levelup_head_start=buy_levelup_head_start,
                 peg_hit_prob=peg_hit_prob,
+                top_slot_prob=top_slot_prob,
+                guaranteed_max_level=guaranteed_max_level,
             )
             events.extend(bonus_events)
             feature_win += bonus_win

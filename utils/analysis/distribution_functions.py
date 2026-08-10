@@ -68,6 +68,12 @@ def get_distribution_moments(dist: dict, bet_cost: float) -> float:
 
     skewness, kurtosis = 0.0, 0.0
     av_win = float(av_win)
+    # DEGENERATE distribution (every book pays the same — e.g. a mode whose payouts all pin at the
+    # wincap): the spread is exactly 0, so the STANDARDISED 3rd/4th moments are 0/0, i.e. undefined
+    # rather than infinite. Report them as 0 (the usual convention) instead of raising
+    # ZeroDivisionError; variance and standard deviation above are already exact at 0.
+    if standard_dev == 0:
+        return variance, norm_std_dev, 0.0, 0.0
     for win, weight in dist.items():
         skewness += ((win - av_win) ** 3) * weight
         kurtosis += ((win - av_win) ** 4) * weight

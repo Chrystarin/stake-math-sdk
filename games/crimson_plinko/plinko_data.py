@@ -83,6 +83,56 @@ def bet_mode_for_balls_per_drop(balls_per_drop: int) -> str:
     return BET_MODE_BY_BALLS_PER_DROP.get(balls, "tendrop")
 
 
+# ---------------------------------------------------------------------------
+# ⚠️⚠️ TEST-ONLY OVERRIDES — branch `plinko_easy_bonus_level`. NOT COMPLIANT MATH. ⚠️⚠️
+# ---------------------------------------------------------------------------
+# These knobs exist so the bonus level-up ladder, the board's top pocket and the max-win payout can be
+# exercised on demand (client animation / QA), NOT to be published. Any mode listed here IGNORES its
+# tuned RTP levers. Keyed by published RGS mode name:
+#
+#   `guaranteed_max_level`: the in-bonus level-up threshold drops to ONE coin-peg hit and every bonus
+#       ball hits a coin peg, so the round climbs level 1 → MAX_BONUS_LEVEL (9) on the first 8 entry
+#       balls — i.e. P(level up) = P(reach max level) = 100%. That dumps the FULL ×10 ladder
+#       (20+40+80+...+2560 = 5,100 free balls) on top of the entry balls in EVERY round, which is
+#       ~50x the tuned ball count: RTP goes to several hundred percent (every book pins at the tier's
+#       wincap) and each book is ~0.5 MB, so the mode's sim count in `run.py` is cut to match.
+#   `top_slot_prob`: per-ball chance to be placed directly in one of the board's TOP-multiplier pockets
+#       (the two 100× corners) instead of taking the fair peg walk. The natural rate is 2/16384 ≈ 0.012%.
+#       At 1.0 EVERY ball lands 100×, which is how a tier is pinned to a guaranteed max win (below).
+#   `wincap`: replaces this mode's advertised max win (WINCAP_BY_BALLS / BUY_BONUS_TIER_DEFS). Read
+#       through `wincap_for_balls` / `test_wincap`, so the sim cap, the published config and the audit
+#       tools all agree on the overridden figure.
+#
+# ⚠️ `tendrop` IS PINNED TO A GUARANTEED ×400 MAX WIN. `top_slot_prob: 1.0` puts all 10 of its balls in
+# a 100× pocket — a raw 1000× per ball-stake — and the 400× cap clips that on EVERY bet, so 100% of
+# tendrop books settle at exactly the mode's advertised max win (its real cap is 250×; the override
+# raises it to the requested 400× so the number on screen is the one being tested). Side effects: no
+# ball can land centre, so tendrop's in-drop free spin never fires, and its payout distribution is a
+# single value (see the degenerate-distribution guard in utils/analysis/distribution_functions.py).
+#
+# TO PUBLISH REAL MATH AGAIN: empty this dict (everything downstream defaults to off) and restore the
+# `run.py` sim counts — nothing else in the tuned math was touched.
+TEST_EASY_BONUS_MODES: dict[str, dict] = {
+    "tendrop": {"top_slot_prob": 1.0, "wincap": 400.0},
+    "buysuperfury": {"guaranteed_max_level": True, "top_slot_prob": 0.50},
+}
+
+
+def test_guaranteed_max_level(mode_name: str) -> bool:
+    """TEST-ONLY: True when this mode's bonus must reach MAX_BONUS_LEVEL with probability 1."""
+    return bool(TEST_EASY_BONUS_MODES.get(str(mode_name), {}).get("guaranteed_max_level", False))
+
+
+def test_top_slot_prob(mode_name: str) -> float:
+    """TEST-ONLY: per-ball chance of being forced into a top-multiplier (100×) pocket. 0 = fair board."""
+    return float(TEST_EASY_BONUS_MODES.get(str(mode_name), {}).get("top_slot_prob", 0.0))
+
+
+def test_wincap(mode_name: str) -> float:
+    """TEST-ONLY max-win override for a mode (0.0 = none; keep the tuned per-tier wincap)."""
+    return float(TEST_EASY_BONUS_MODES.get(str(mode_name), {}).get("wincap", 0.0))
+
+
 # Declared RTP for the Stake Engine math summary. Each base mode = board EV + the rare in-drop bonus +
 # the rare in-drop free spin. Every mode should cluster within ±0.5% and stay inside 90.00%-96.70%.
 TARGET_RTP = 0.957
@@ -116,8 +166,16 @@ DEFAULT_WINCAP = max(WINCAP_BY_BALLS.values())
 
 
 def wincap_for_balls(balls_per_drop: int) -> float:
-    """Per-tier max-win multiplier (per stake_per_ball). Falls back to the ladder max."""
-    return float(WINCAP_BY_BALLS.get(int(balls_per_drop), DEFAULT_WINCAP))
+    """Per-tier max-win multiplier (per stake_per_ball). Falls back to the ladder max.
+
+    A tier listed in TEST_EASY_BONUS_MODES with a `wincap` returns THAT instead, so the sim cap
+    (run_sims sets config.wincap from BetMode.max_win), the published config and the audit tools all
+    read the same overridden figure. Empty that dict and the tuned ladder applies again."""
+    balls = int(balls_per_drop)
+    override = test_wincap(bet_mode_for_balls_per_drop(balls))
+    if override > 0:
+        return override
+    return float(WINCAP_BY_BALLS.get(balls, DEFAULT_WINCAP))
 
 # OPTION A (per-drop meter trigger): the bonus fires IN-DROP when the PER-DROP bonus meter
 # (BONUS_METER_TIER) fills from this drop's own coin-peg hits — NOT a cross-bet meter (statelessness:
@@ -430,6 +488,9 @@ def buy_bonus_cost(tier_key: str) -> float:
 
 
 def buy_bonus_wincap(tier_key: str) -> float:
+    override = test_wincap(buy_bonus_mode_name(tier_key))
+    if override > 0:
+        return override
     tier = BUY_BONUS_TIER_BY_KEY.get(tier_key)
     return float(tier["wincap"]) if tier else DEFAULT_WINCAP
 

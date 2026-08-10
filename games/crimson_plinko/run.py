@@ -28,6 +28,7 @@ from plinko_data import (
     SPIN_METER_TIER,
     bet_mode_for_balls_per_drop,
     buy_bonus_mode_name,
+    test_guaranteed_max_level,
 )
 from publish_verify import sync_all_publish_files
 
@@ -214,9 +215,30 @@ if __name__ == "__main__":
     for tier in BUY_BONUS_TIER_DEFS:
         num_sim_args[buy_bonus_mode_name(tier["key"])] = max(1000, buy_sims // sims_div)
 
+    # ⚠️ TEST-ONLY (branch `plinko_easy_bonus_level`): a mode in `TEST_EASY_BONUS_MODES` with
+    # `guaranteed_max_level` awards the FULL ×10 ladder every round — 5,100 free balls on top of its
+    # entry balls, i.e. ~50x the tuned ball count and ~0.5 MB of `outcomes` PER BOOK. At the 200,000
+    # buy-sims above that is ~100 GB of books and certain OOM, so those modes are cut to a small count:
+    # enough books to exercise the client, useless for RTP (which this branch does not preserve anyway).
+    # Restoring the real math (emptying TEST_EASY_BONUS_MODES) makes this loop a no-op automatically.
+    test_easy_sims = max(100, int(os.getenv("PLINKO_TEST_EASY_SIMS", "2000")) // sims_div)
+    for mode_name in list(num_sim_args):
+        if test_guaranteed_max_level(mode_name):
+            num_sim_args[mode_name] = test_easy_sims
+            # ASCII only: the Windows console runs cp1252 and raises UnicodeEncodeError on symbols.
+            print(f"!! TEST MODE: {mode_name} forced to max bonus level - sims cut to {test_easy_sims}")
+
     # Dev aid: PLINKO_ONLY_MODES=buystandard,buysuperfury restricts the SIM step to those modes (existing
     # books for the others are reused by publish/config). Lets you re-sim just the buy modes when tuning
     # entry/wincap without re-running the slow base-mode sims. Empty = sim all modes.
+    #
+    # It ALSO scopes the publish sync below to the same modes. That is the bigger win: `sync_publish_files`
+    # STREAMS AND RE-VERIFIES EVERY BOOK of each mode it touches (LUT payouts + the feature-payout
+    # reconstruction), so the default all-modes sync re-reads onedrop's 9.6M books on every run and
+    # dominates the wall clock even when a single mode was re-simmed. A mode that was not re-simmed has
+    # an unchanged LUT and an unchanged archive, so skipping it changes nothing on disk — the config /
+    # manifest step below still hashes ALL 8 modes' publish files, so the published set stays complete
+    # and consistent. Run once WITHOUT this variable before publishing, to verify every mode.
     only_modes = {m.strip() for m in os.getenv("PLINKO_ONLY_MODES", "").split(",") if m.strip()}
     if only_modes:
         num_sim_args = {m: n for m, n in num_sim_args.items() if m in only_modes}
@@ -237,7 +259,11 @@ if __name__ == "__main__":
             compression,
             profiling,
         )
-    sync_all_publish_files(gamestate)
+    sync_modes = sorted(only_modes) if only_modes else None
+    if sync_modes:
+        print(f"Publish sync scoped to {', '.join(sync_modes)} "
+              f"(other modes' books/LUTs are untouched and still hashed into the config).")
+    sync_all_publish_files(gamestate, betmodes=sync_modes)
     generate_configs(gamestate)
     write_plinko_fe_config(gamestate)
     report_mode_rtp(gamestate)
