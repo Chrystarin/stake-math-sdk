@@ -257,7 +257,10 @@ def execute_all_tests(config, excluded_modes=[]):
         if max_rtp_diff > 0.05:
             warnings.warn(f"\n\nMode RTP difference exceedes allowed difference for approvals: {max_rtp_diff}\n")
 
-    fname = f"games/{config.game_id}/library/stats_summary.json"
+    # Use the config's own library path rather than rebuilding one from `game_id`: a game's
+    # RGS id need not match its package folder (crimson_plinko publishes as
+    # `one_eyed_willys_plinko`), and the id-derived path does not exist for those games.
+    fname = os.path.join(config.library_path, "stats_summary.json")
     write_all_stats(mode_stats, fname)
 
 

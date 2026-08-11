@@ -1,10 +1,16 @@
 """One-Eyed Willy's Plinko math config — matches stake-web-sdk apps/plinko."""
 
 import os
+import sys
 
 from src.config.config import BetMode, Config
 from src.config.distributions import Distribution
 from src.config.paths import PATH_TO_GAMES
+
+# `run.py` puts this directory on sys.path automatically, but tools that import the config as
+# a package module (utils/rgs_verification.py does `games.crimson_plinko.game_config`) do not.
+# Add it so the flat `plinko_data` import resolves either way.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from plinko_data import (
     BALLS_PER_DROP_OPTIONS,
