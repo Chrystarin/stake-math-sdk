@@ -25,6 +25,7 @@ from plinko_data import (
     bonus_in_drop_rate,
     bonus_peg_hit_prob,
     bonus_possible_for_balls,
+    bonus_round_peg_hit_prob,
     buy_bonus_mode_name,
     declared_rtp_for_balls,
     scaled_bonus_meter_start,
@@ -90,6 +91,7 @@ class GameConfig(Config):
             buy_entry_balls: int = 0,
             buy_levelup_head_start: float = 0.0,
             peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+            bonus_peg_hit_prob: float = -1.0,
         ) -> dict:
             return {
                 "difficulty": 0,
@@ -112,6 +114,11 @@ class GameConfig(Config):
                 # (`bonus_levelup_pegs`); this is how fast it gets the hits, and it is the RTP lever
                 # that keeps each mode compliant under that shared ladder.
                 "peg_hit_prob": float(peg_hit_prob),
+                # IN-BONUS coin-peg probability, decoupled from the drop meter's above. The flat trigger
+                # rate needs a lively trigger meter but a slowly-climbed level-up ladder, and one number
+                # cannot be both. Negative = fall back to `peg_hit_prob` (correct for the buy modes,
+                # whose paid drop is empty so only the in-bonus value ever applied).
+                "bonus_peg_hit_prob": float(bonus_peg_hit_prob),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -138,6 +145,9 @@ class GameConfig(Config):
             rate = bonus_in_drop_rate(balls) if bonus_possible_for_balls(balls) else 0.0
             normal_quota = max(0.0, 1.0 - rate)
             peg_prob = bonus_peg_hit_prob(mode_name)
+            # Separate in-bonus climb rate (see BONUS_ROUND_PEG_HIT_PROB_BY_MODE). Falls back to
+            # `peg_prob` for any mode without its own entry.
+            bonus_peg = bonus_round_peg_hit_prob(mode_name)
 
             distributions = [
                 # Normal paid drop — the per-drop bonus meter (bonus_in_drop) fires the bonus when
@@ -152,6 +162,7 @@ class GameConfig(Config):
                         spin_in_drop=spin_in_drop,
                         bonus_in_drop=bonus_in_drop,
                         peg_hit_prob=peg_prob,
+                        bonus_peg_hit_prob=bonus_peg,
                     ),
                 ),
             ]
@@ -172,6 +183,7 @@ class GameConfig(Config):
                             bonus_in_drop=bonus_in_drop,
                             force_bonus=True,
                             peg_hit_prob=peg_prob,
+                            bonus_peg_hit_prob=bonus_peg,
                         ),
                     ),
                 )

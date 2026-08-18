@@ -19,7 +19,9 @@ from plinko_data import (
     BONUS_METER_TIER,
     BONUS_PEG_HIT_PROB,
     BONUS_PEG_HIT_PROB_BY_MODE,
+    BONUS_ROUND_PEG_HIT_PROB_BY_MODE,
     BONUS_WHEEL_FREE_BALLS,
+    BONUS_WHEEL_WEIGHTS_BY_BALLS,
     COEFFICIENT_SETS,
     COEFFICIENT_SETS_BY_BALLS,
     FREE_SPIN_SEGMENTS,
@@ -116,6 +118,18 @@ def write_plinko_fe_config(gamestate: GameState) -> None:
     # Bonus wheel ABSOLUTE free-ball awards (Aztec values, tier-independent). The client renders these
     # directly on the data-driven `bonus-roulette-wheel-empty.png` (mirror in constants.ts).
     fe["bonusWheelFreeBalls"] = list(BONUS_WHEEL_FREE_BALLS)
+    # Bonus wheel LANDING WEIGHTS per balls-per-drop tier (index-aligned to bonusWheelFreeBalls,
+    # per-10,000). The painted values above never change; only how often each wedge is landed on. This
+    # is what makes the flat 2% bonus trigger affordable — see BONUS_WHEEL_WEIGHTS_BY_BALLS. Tiers
+    # absent here land uniformly. Mirror in constants.ts BONUS_WHEEL_WEIGHTS.
+    fe["bonusWheelWeightsByBalls"] = {
+        str(balls): [float(w) for w in weights]
+        for balls, weights in BONUS_WHEEL_WEIGHTS_BY_BALLS.items()
+    }
+    # IN-BONUS coin-peg probability per mode, decoupled from `bonusPegHitProbByMode` (which fills the
+    # paid drop's trigger meter). Modes absent here fall back to that value. Informational for the
+    # client — every coin-peg hit is authored per ball in the book. Mirror in constants.ts.
+    fe["bonusRoundPegHitProbByMode"] = dict(BONUS_ROUND_PEG_HIT_PROB_BY_MODE)
     # Per-tier in-drop bonus rate (the folded-bonus quota) — informational mirror for the client.
     fe["bonusInDropRate"] = {str(balls): rate for balls, rate in BONUS_IN_DROP_RATE.items()}
     # Level-up table keyed by level string (JSON object) for the client to mirror.

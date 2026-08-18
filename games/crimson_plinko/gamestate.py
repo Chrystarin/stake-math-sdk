@@ -55,6 +55,11 @@ class GameState(GameStateOverride):
         # the lever that holds each mode at TARGET_RTP under that shared ladder. Applies to the paid
         # drop's trigger meter AND to the bonus round's energy meter.
         peg_hit_prob = float(conditions.get("peg_hit_prob", BONUS_PEG_HIT_PROB))
+        # IN-BONUS coin-peg probability — decoupled from the drop meter's. The paid drop's trigger meter
+        # wants to stay lively at 0.18, but with the trigger rate pinned flat the bonus's EV budget is
+        # tiny, so its level-up ladder has to be climbed more slowly. Negative = "not supplied", which
+        # falls back to `peg_hit_prob` for both (the pre-split behaviour, still correct for the buys).
+        bonus_peg_hit_prob = float(conditions.get("bonus_peg_hit_prob", -1.0))
 
         self.repeat = True
         while self.repeat:
@@ -116,6 +121,7 @@ class GameState(GameStateOverride):
                 buy_entry_balls=buy_entry_balls,
                 buy_levelup_head_start=buy_levelup_head_start,
                 peg_hit_prob=peg_hit_prob,
+                bonus_peg_hit_prob=bonus_peg_hit_prob,
             )
             total_win += feature_win
 

@@ -41,6 +41,8 @@ from plinko_data import (
     bonus_in_drop_for_balls,
     bonus_in_drop_rate,
     bonus_peg_hit_prob,
+    bonus_round_peg_hit_prob,
+    bonus_wheel_mean_entry,
     buy_bonus_mode_name,
     coefficients_for,
     scaled_bonus_meter_max,
@@ -269,6 +271,7 @@ def main() -> None:
     print(f"centre-pocket P {centre_pocket_prob():.6f}   coin-peg P {BONUS_PEG_HIT_PROB}\n")
 
     rows = []
+    incidence: dict[str, float] = {}
 
     print(f"{'mode':>13} {'cost':>5} {'cap':>5} {'P(spin)':>9} {'P(bonus)':>9} {'quota':>9} "
           f"{'solved':>9} {'RTP':>9} {'+-SE':>7}")
@@ -288,10 +291,19 @@ def main() -> None:
             print(f"{mode:>13} {float(balls):>5.0f} {wincap:>5.0f} {0.0:>9.5f} {0.0:>9.5f} "
                   f"{quota:>9.5f} {'  (n/a)':>9} {rtp*100:>8.3f}% {0.0:>6.3f}%")
             continue
-        peg = bonus_peg_hit_prob(bet_mode_for_balls_per_drop(balls))
-        bonus = bonus_stats(gs, tier_balls=balls, n=n, peg_prob=peg)
+        mode_name = bet_mode_for_balls_per_drop(balls)
+        # TWO DIFFERENT PEGS since the flat-rate re-tune: `peg` fills the paid drop's trigger meter,
+        # `bonus_peg` climbs the level-up ladder once the bonus is running. Passing one for both (as
+        # this tool did before the split) misreads BOTH the fire rate and the bonus EV.
+        peg = bonus_peg_hit_prob(mode_name)
+        bonus_peg = bonus_round_peg_hit_prob(mode_name)
+        bonus = bonus_stats(gs, tier_balls=balls, n=n, peg_prob=bonus_peg)
         r = base_mode_rtp(gs, balls, bonus, quota=quota, wincap=wincap, peg=peg)
         rows.append((mode, r["rtp"], r["se"]))
+        # Total bonus incidence per bet — the meter/quota path OR the free-spin wheel chaining one.
+        # This is the number the flat-rate design pins, so surface it next to the RTP.
+        p_trigger = quota + (1.0 - quota) * r["p_bonus"]
+        incidence[mode] = 1.0 - (1.0 - p_trigger) * (1.0 - r["p_spin"] * free_spin_cash_ev()[1])
         print(f"{mode:>13} {float(balls):>5.0f} {wincap:>5.0f} {r['p_spin']:>9.5f} "
               f"{r['p_bonus']:>9.5f} {quota:>9.5f} {r['solved_quota']:>9.5f} "
               f"{r['rtp']*100:>8.3f}% {r['se']*100:>6.3f}%")
@@ -307,7 +319,7 @@ def main() -> None:
             n=n,
             entry_balls=int(tier["entry_balls"]),
             head_start=float(tier.get("head_start", 0.0)),
-            peg_prob=bonus_peg_hit_prob(name),
+            peg_prob=bonus_round_peg_hit_prob(name),
         )
         r = buy_mode_rtp(gs, tier, bonus)
         rows.append((name, r["rtp"], r["se"]))
@@ -315,6 +327,15 @@ def main() -> None:
               f"{int(tier['entry_balls']):>6} {bonus_peg_hit_prob(name):>7.4f} "
               f"{bonus['avg_level']:>6.2f} {bonus['mean_balls']:>7.1f} {bonus['max_balls']:>5} "
               f"{r['cap_rate']*100:>8.4f}% {r['rtp']*100:>8.3f}% {r['se']*100:>6.3f}%")
+
+    if incidence:
+        print()
+        print("bonus incidence per bet (meter/quota OR a free-spin BONUS chain) — pinned FLAT:")
+        for mode, p in incidence.items():
+            print(f"{mode:>13} {p*100:>8.4f}%   wheel mean entry "
+                  f"{bonus_wheel_mean_entry(int(mode.split('-')[0])):>6.2f} balls")
+        spread_inc = (max(incidence.values()) - min(incidence.values())) * 100
+        print(f"{'spread':>13} {spread_inc:>8.4f}%")
 
     rtps = [r[1] for r in rows]
     spread = (max(rtps) - min(rtps)) * 100

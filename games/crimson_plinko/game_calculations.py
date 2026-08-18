@@ -16,6 +16,7 @@ from plinko_data import (
     bonus_level_balls,
     bonus_levelup_pegs,
     bonus_wheel_free_balls,
+    bonus_wheel_weights,
     coefficients_for,
     scaled_spin_meter_max,
     spin_in_drop_for_balls,
@@ -160,7 +161,13 @@ class GameCalculations(Executables):
         if entry_balls_override and entry_balls_override > 0:
             entry_balls = int(entry_balls_override)
         else:
-            entry_balls = int(py_random.choice(bonus_wheel_free_balls(balls_per_drop)))
+            # WEIGHTED landing: the wedge VALUES are the painted ones, but each tier lands on them with
+            # its own probability (`bonus_wheel_weights`) — the lever that makes a flat per-tier trigger
+            # rate affordable. Uniform for any tier without a profile, i.e. the pre-weighting behaviour.
+            wedges = bonus_wheel_free_balls(balls_per_drop)
+            entry_balls = int(
+                py_random.choices(wedges, weights=bonus_wheel_weights(balls_per_drop), k=1)[0]
+            )
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
         # Level-up peg threshold: the SHARED per-level escalating ladder (`bonus_levelup_pegs`) — frequent
@@ -278,6 +285,7 @@ class GameCalculations(Executables):
         buy_entry_balls: int = 0,
         buy_levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+        bonus_peg_hit_prob: float = -1.0,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -305,6 +313,11 @@ class GameCalculations(Executables):
         the free bonus. (`suppress_features` is unused now but kept for signature stability.)
         """
         _ = suppress_features  # unused (kept for signature stability)
+        # `peg_hit_prob` fills the PAID DROP's trigger meter; `bonus_peg_hit_prob` climbs the level-up
+        # ladder once a bonus is running. They are separate levers (a flat trigger rate wants a lively
+        # meter but a slow climb) — a negative value means "not supplied", i.e. the pre-split behaviour
+        # of using one number for both.
+        bonus_peg = peg_hit_prob if bonus_peg_hit_prob < 0.0 else bonus_peg_hit_prob
         events: list[dict] = []
         feature_win = 0.0
         spin_meter = max(0, int(spin_meter_start))
@@ -344,7 +357,7 @@ class GameCalculations(Executables):
                     row_count=row_count,
                     stake_per_ball=stake_per_ball,
                     balls_per_drop=balls,
-                    peg_hit_prob=peg_hit_prob,
+                    peg_hit_prob=bonus_peg,
                 )
                 events.extend(bonus_events)
                 feature_win += bonus_win
@@ -385,7 +398,7 @@ class GameCalculations(Executables):
                 # ladder is the shared one; the tier's own `peg_hit_prob` is what gates the climb.
                 entry_balls_override=buy_entry_balls,
                 levelup_head_start=buy_levelup_head_start,
-                peg_hit_prob=peg_hit_prob,
+                peg_hit_prob=bonus_peg,
             )
             events.extend(bonus_events)
             feature_win += bonus_win

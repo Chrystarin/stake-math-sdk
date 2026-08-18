@@ -164,11 +164,34 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # 95.233% / 95.439% / 95.739%, confirmed against a 400k/200k brute-force mixture sim. These quotas are
 # its solution for 95.700%. Re-solve with `rtp_audit.py`, NOT `measure_tuning_capped.py`, after any
 # change to the bonus, the ladder, the entry wheel or `BONUS_METER_TIER`.
+#
+# ⚠️ FLAT-RATE DESIGN (Aug 2026). The quota is no longer a per-tier fine-tune around whatever the meter
+# happened to fire at — every tier is now pinned to the SAME total bonus incidence, 2.000% per bet:
+#
+#     P(book contains >= 1 bonus) = 1 - (1 - p_trigger)(1 - p_chain) = 0.02000
+#
+# where `p_chain = P(free spin fires) x P(BONUS segment)` is the free-spin wheel chaining a bonus, and
+# `p_trigger = quota + (1 - quota) x P(Binomial(balls, BONUS_PEG_HIT_PROB) >= BONUS_METER_TIER max)` is
+# the meter path. The chain differs per tier (0.101% / 0.169% / 0.565%), so the meter path is solved
+# DOWN to compensate — that is why the trigger column below is not itself flat:
+#
+#     tier   p_chain    p_trigger   meter max -> natural   quota      TOTAL
+#      10    0.1011%     1.9008%      6 -> 0.3669%        0.01540    2.000%
+#      20    0.1693%     1.8338%      8 -> 1.7707%        0.00064    2.000%
+#      50    0.5653%     1.4428%     16 -> 1.2024%        0.00243    2.000%
+#
+# ⚠️ 2% IS NEAR THE CEILING, NOT AN ARBITRARY DIAL. The whole feature budget is
+# `TARGET_RTP - board_ev_per_ball` = 6.07 RTP points on every tier, which pins
+# `trigger_rate x E[bonus payout / bet] ~= 0.0607`. The bonus's cheapest possible outcome is one
+# 20-ball wedge = 17.93x, so the 10-ball tier can afford at most 0.0607 x 10 / 17.93 = 2.98% of them
+# even with the wheel pinned to all-20s. A "flat 5%" reads 99.32% RTP there and is unreachable under
+# any weighting — it needs new wedge VALUES or a lower board. Do not raise this rate without
+# re-deriving that ceiling.
 BONUS_IN_DROP_RATE: dict[int, float] = {
     1: 0.0,  # FEATURE-FREE tier: no bonus stratum is published for onedrop at all.
-    10: 0.00323,
-    20: 0.00298,
-    50: 0.01333,
+    10: 0.01540,
+    20: 0.00064,
+    50: 0.00243,
 }
 
 
@@ -211,10 +234,19 @@ BONUS_METER_MAX = 20
 # ⚠️ 10-ball `max` RAISED 6 → 7 when the entry wheel went back to 20..100 (avg 60): at max 6 the natural
 # fire rate alone lands that tier on 96.198%, above TARGET_RTP with a zero quota and nothing left to tune.
 # Mirror in apps/plinko game-logic/constants.ts BONUS_METER_TIER.
+#
+# ⚠️ FLAT-RATE DESIGN (Aug 2026): `max` is now chosen as the SMALLEST bar whose natural fire rate sits
+# at or below that tier's required `p_trigger` (see BONUS_IN_DROP_RATE), so the quota only ever tops the
+# meter UP and never has to be negative. 10 -> 6 (0.3669%), 20 -> 8 (1.7707%), 50 -> 16 (1.2024%).
+# Note the 20-ball bar lands almost exactly on target (quota 0.00064) while the 10-ball bar overshoots
+# downward — 6 gives 0.3669% against a 1.9008% requirement, so ~81% of 10-ball bonuses arrive via the
+# quota stratum rather than organically. That is unchanged in KIND from before (the old 10-ball split
+# was 0.044% organic against a 0.323% quota) and still not a meter bypass: `ensure_coin_pegs_fill_meter`
+# fills those drops' coin pegs so the meter completes 0 -> max from real hits either way.
 BONUS_METER_TIER: dict[int, dict[str, float]] = {
-    10: {"max": 7, "start_ratio": 0.0},
-    20: {"max": 9, "start_ratio": 0.0},
-    50: {"max": 17, "start_ratio": 0.0},
+    10: {"max": 6, "start_ratio": 0.0},
+    20: {"max": 8, "start_ratio": 0.0},
+    50: {"max": 16, "start_ratio": 0.0},
 }
 
 # Cosmetic bonus-meter for the 1-ball tier (and any tier without a BONUS_METER_TIER entry): it fills
@@ -272,6 +304,71 @@ def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:
     bonus is a free feature that dumps the same big ball counts regardless of the base ball count."""
     _ = balls_per_drop  # kept for signature stability (callers pass the tier)
     return list(BONUS_WHEEL_FREE_BALLS)
+
+
+# Bonus-roulette LANDING WEIGHTS, per balls-per-drop tier (index-aligned with BONUS_WHEEL_FREE_BALLS).
+#
+# ⚠️ THE PAINTED VALUES NEVER CHANGE — only how often each wedge is landed on. This is the same device
+# the free-spin wheel already uses (`FREE_SPIN_WEIGHTS`: 8 equal visual slices, weighted landing), and
+# it is what makes a FLAT per-tier bonus trigger rate affordable at all.
+#
+# ⚠️ WHY THE WEIGHTS MUST BE PER-TIER. A bet costs `balls_per_drop`, but a bonus awards the SAME
+# absolute ball count no matter which tier fired it — so one bonus costs 5x more RTP on a 10-ball bet
+# than on a 50-ball bet. The whole feature budget is only `TARGET_RTP - board_ev_per_ball` = 6.07 RTP
+# points on EVERY tier, which pins the product
+#
+#     trigger_rate x E[bonus payout, as a multiple of the bet]  ~=  0.0607
+#
+# A flat trigger rate therefore forces E[bonus payout / bet] to be flat too, and the only in-bounds
+# lever for that (wedge values, pocket multipliers and level-up rewards all fixed) is the landing
+# weight. Low tiers get a profile skewed to the small wedges; high tiers stay near uniform.
+#
+# ⚠️ THE WHEEL'S SMALLEST WEDGE IS A HARD FLOOR. Mean entry can never go below 20 balls, so the flat
+# rate itself is capped: at 20 balls a bonus is worth 17.93x, and the 10-ball tier can only afford
+# 0.0607 x 10 / 17.93 = 2.98% of them. A "flat 5%" is arithmetically impossible on 10-ball under any
+# weighting — it reads 99.32% RTP even with the wheel pinned to all-20s. Re-derive with rtp_audit.py
+# before raising the rate; do not interpolate.
+#
+# Tiers absent here (1-ball, and every buy mode — which overrides the entry with `entry_balls`) fall
+# back to UNIFORM, i.e. exactly the pre-weighting behaviour. Mirror in apps/plinko
+# game-logic/constants.ts BONUS_WHEEL_WEIGHTS.
+#
+# Weights are per-10,000, so `weight / 100` reads directly as the landing percentage. EVERY wedge keeps
+# a non-zero weight — the 10-ball tier's 100 lands 1 spin in 10,000, not never.
+#
+#   10-ball  mean 24.70 balls   100:0.01% 90:0.02% 80:0.07% 70:0.23% 60:0.71% 50:2.23% 40:6.96%
+#                               30:21.76% 20:68.01%
+#   20-ball  mean 46.00 balls   100:3.86% 90:4.83% 80:6.04% 70:7.55% 60:9.45% 50:11.82% 40:14.79%
+#                               30:18.51% 20:23.15%
+#   50-ball  mean 77.80 balls   100:27.66% 90:20.53% 80:15.24% 70:11.32% 60:8.40% 50:6.24% 40:4.63%
+#                               30:3.44% 20:2.55%
+#
+# ⚠️ THE TIERS SKEW IN OPPOSITE DIRECTIONS, and that is the design, not a bug: a 50-ball bet costs 5x a
+# 10-ball bet, so it can afford 5x the bonus at the same trigger rate. Big-ball players land the big
+# wedges; small-ball players land the small ones. This matches the per-tier wincap ladder's existing
+# story ("more balls / higher risk => bigger potential payouts") and the per-tier boards already in
+# COEFFICIENT_SETS_BY_BALLS. The rules copy should say the award scales with the ball count.
+BONUS_WHEEL_WEIGHTS_BY_BALLS: dict[int, list[float]] = {
+    10: [1, 2, 7, 23, 71, 223, 696, 2176, 6801],
+    20: [386, 483, 604, 755, 945, 1182, 1479, 1851, 2315],
+    50: [2766, 2053, 1524, 1132, 840, 624, 463, 344, 255],
+}
+
+
+def bonus_wheel_weights(balls_per_drop: int = 0) -> list[float]:
+    """Landing weights for this tier's bonus roulette (uniform when the tier has no profile)."""
+    weights = BONUS_WHEEL_WEIGHTS_BY_BALLS.get(int(balls_per_drop))
+    if not weights or len(weights) != len(BONUS_WHEEL_FREE_BALLS):
+        return [1.0] * len(BONUS_WHEEL_FREE_BALLS)
+    return [float(w) for w in weights]
+
+
+def bonus_wheel_mean_entry(balls_per_drop: int = 0) -> float:
+    """Mean entry free balls for this tier's weighted wheel (the RTP-relevant summary)."""
+    values = bonus_wheel_free_balls(balls_per_drop)
+    weights = bonus_wheel_weights(balls_per_drop)
+    total = math.fsum(weights)
+    return math.fsum(v * w for v, w in zip(values, weights)) / total if total > 0 else 0.0
 
 
 # On-screen bonus level-bar values (mirror apps/plinko game-logic/constants.ts BONUS_LEVEL_LABELS).
@@ -482,6 +579,43 @@ BONUS_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
 def bonus_peg_hit_prob(mode_name: str) -> float:
     """Per-ball coin-peg probability for a published bet mode (falls back to the global default)."""
     return float(BONUS_PEG_HIT_PROB_BY_MODE.get(str(mode_name), BONUS_PEG_HIT_PROB))
+
+
+# IN-BONUS coin-peg probability, keyed by published mode — DECOUPLED from the drop-meter value above.
+#
+# ⚠️ WHY THE SPLIT. `BONUS_PEG_HIT_PROB_BY_MODE` drives TWO unrelated things that used to share one
+# number: (a) how fast the PAID DROP's bonus-trigger meter fills, and (b) how fast a BONUS ROUND's balls
+# climb the level-up ladder. Once the trigger rate is pinned flat (see BONUS_IN_DROP_RATE), those two
+# pull in opposite directions — the trigger wants a lively 0.18 meter, while the flat rate's tiny EV
+# budget wants the ladder climbed slowly. So (a) stays on `bonus_peg_hit_prob` and (b) moves here.
+#
+# This changes nothing for the BUY modes: their paid drop is empty, so only (b) ever applied to them,
+# and any mode absent from this map falls back to its `BONUS_PEG_HIT_PROB_BY_MODE` value.
+#
+# ⚠️ The level-up REWARDS (`BONUS_LEVEL_BALLS`) and the ladder (`BONUS_LEVELUP_PEG_HITS_BY_LEVEL`) are
+# UNTOUCHED by this — only how often a falling bonus ball delivers a hit. The ×10 award ladder
+# self-sustains just above 0.18 (at 0.25 the earned bonus explodes: mean payout 125 → 1,519, P(level 9)
+# 0.001% → 29.7%), so never interpolate upward; re-measure with rtp_audit.py.
+#
+# Base modes drop from the old shared 0.18 to these, which is what pays for the flat 2% trigger. The
+# 50-ball tier keeps the fastest climb (0.16, avg level 2.89) because its bet funds the most bonus; the
+# low tiers climb slowly (0.10, avg level 1.11-1.50) since their whole bonus budget is ~2.8x the bet.
+# The buy modes are deliberately ABSENT — they fall back to their own `BONUS_PEG_HIT_PROB_BY_MODE`
+# value, which was always an in-bonus number (their paid drop is empty), so nothing about them moves.
+BONUS_ROUND_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
+    "tendrop": 0.10,
+    "twentydrop": 0.10,
+    "fiftydrop": 0.16,
+}
+
+
+def bonus_round_peg_hit_prob(mode_name: str) -> float:
+    """Per-ball coin-peg probability INSIDE a bonus round for a published mode. Falls back to that
+    mode's drop-meter probability, which is the pre-split behaviour."""
+    name = str(mode_name)
+    if name in BONUS_ROUND_PEG_HIT_PROB_BY_MODE:
+        return float(BONUS_ROUND_PEG_HIT_PROB_BY_MODE[name])
+    return bonus_peg_hit_prob(name)
 
 
 def _js_round(value: float) -> int:
