@@ -81,13 +81,19 @@ def bonus_round_event(
     level: int,
     balls_played: int = 0,
     levelup_pegs: int = 0,
+    spin_meter_start: int = 0,
 ) -> None:
     """One bonus level's batch of free balls.
 
     `levelup_pegs` is the coin-peg count needed to LEAVE this level (`bonus_levelup_pegs(level)`) —
     the escalating threshold is per-level, so the client cannot know it from the level-1 value alone.
     It sizes the in-bonus energy bar from this field (`sizeBonusMeterForLevel` in apps/plinko
-    gameOrchestrator.ts); omitting it made every level render against the level-1 threshold."""
+    gameOrchestrator.ts); omitting it made every level render against the level-1 threshold.
+
+    `spin_meter_start` is the FREE-SPIN meter carried into this batch. That meter runs across levels
+    (it resets only when it fires), so a batch can open part-full, and the client cannot recover the
+    carry from its own level boundaries once `combineNextBonusLevelNow` has merged two levels' balls
+    into one pool. Always emitted — 0 is a real, meaningful value here, unlike `levelupPegs`."""
     event = {
         "index": len(gamestate.book.events),
         "type": "bonusRound",
@@ -95,6 +101,7 @@ def bonus_round_event(
         "outcomes": outcomes,
         "level": int(level),
         "ballsPlayed": int(balls_played),
+        "spinMeterStart": int(spin_meter_start),
     }
     if int(levelup_pegs) > 0:
         event["levelupPegs"] = int(levelup_pegs)

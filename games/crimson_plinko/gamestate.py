@@ -166,6 +166,9 @@ class GameState(GameStateOverride):
                         # Pegs to LEAVE this level — the escalating threshold is per-level, so the
                         # client can only size each level's energy bar if the book publishes it.
                         levelup_pegs=int(event.get("levelupPegs", 0)),
+                        # Free-spin meter carried INTO this batch (it runs across levels), so the
+                        # client's bar completes on the same ball this book's walk completed it on.
+                        spin_meter_start=int(event.get("spinMeterStart", 0)),
                     )
                 elif event_type == "spinMeter":
                     spin_meter_event(self, value=event["value"], max_value=event["max"])

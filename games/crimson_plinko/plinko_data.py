@@ -187,6 +187,12 @@ def wincap_for_balls(balls_per_drop: int) -> float:
 # even with the wheel pinned to all-20s. A "flat 5%" reads 99.32% RTP there and is unreachable under
 # any weighting — it needs new wedge VALUES or a lower board. Do not raise this rate without
 # re-deriving that ceiling.
+# ⚠️ UNCHANGED by the 2026-08-19 in-bonus meter work, and that is deliberate. An EARNED bonus now runs
+# its free-spin wheel ~2x instead of ~1x, which lifted 10-ball and 50-ball above target, and dropping
+# these rates would have fixed the RTP — at the cost of the FLAT 2% bonus incidence this table exists to
+# hold (it fell to 1.83% / 2.00% / 1.95%). Incidence is the player-facing promise; the extra value is
+# paid for out of `BONUS_WHEEL_WEIGHTS_BY_BALLS` instead, which changes what a bonus is WORTH without
+# changing how often one arrives.
 BONUS_IN_DROP_RATE: dict[int, float] = {
     1: 0.0,  # FEATURE-FREE tier: no bonus stratum is published for onedrop at all.
     10: 0.01540,
@@ -282,9 +288,22 @@ BONUS_PEG_HIT_PROB = 0.18
 # game-logic/constants.ts FREE_SPIN_SEGMENTS.
 FREE_SPIN_SEGMENTS: list[str] = ["2X", "0.5X", "1X", "5X", "10X", "BONUS", "20X", "15X"]
 
-# Free-spin wheel WEIGHTS (index-aligned). EQUAL (all 1) — the labeled wheel is 8 equal slices, so the
-# landing is uniform. Mirror in apps/plinko game-logic/constants.ts FREE_SPIN_WEIGHTS.
-FREE_SPIN_WEIGHTS: list[float] = [1, 1, 1, 1, 1, 1, 1, 1]
+# Free-spin wheel WEIGHTS (index-aligned, per-10,000 so `w / 100` reads as a percentage).
+#
+# ⚠️ THE PAINTED VALUES NEVER CHANGE — the labeled wheel keeps its 8 equal visual slices and every wedge
+# stays reachable; only how often each is LANDED on moves. Same device as `BONUS_WHEEL_WEIGHTS_BY_BALLS`.
+#
+# These were uniform until 2026-08-19, when the in-bonus meter began firing on EVERY refill instead of
+# once per level batch. That turns the wheel from a garnish into a first-order RTP term — a bought round
+# now takes ~2 spins instead of ~1 — so the mean numeric award is clipped from 7.64x to 4.97x to pay for
+# the extra cadence. The top wedges carry the cut (20X 12.50% -> 3.70%, 15X 12.50% -> 5.50%) and 5X/10X
+# absorb it, which keeps the wheel feeling like a wheel: the low end is untouched, so the reweight costs
+# the player frequency of the two biggest wedges, not the shape of the whole thing.
+#
+# ⚠️ `BONUS` IS PINNED AT 12.50% and must stay there. It is not a payout wedge — it CHAINS a bonus round,
+# and the flat 2% bonus incidence in `BONUS_IN_DROP_RATE` is solved against exactly this probability.
+# Move it and every base tier's quota is wrong. Mirror in apps/plinko game-logic/constants.ts.
+FREE_SPIN_WEIGHTS: list[float] = [1550, 1530, 1500, 2000, 1250, 1250, 370, 550]
 
 # Bonus roulette ABSOLUTE entry free-ball awards (9 segments, clockwise from the top marker; avg = 60).
 # THE ART IS THE SOURCE OF TRUTH: these are exactly the numbers painted on the wheel PNG, in wedge order
@@ -348,10 +367,15 @@ def bonus_wheel_free_balls(balls_per_drop: int = 0) -> list[int]:
 # wedges; small-ball players land the small ones. This matches the per-tier wincap ladder's existing
 # story ("more balls / higher risk => bigger potential payouts") and the per-tier boards already in
 # COEFFICIENT_SETS_BY_BALLS. The rules copy should say the award scales with the ball count.
+# ⚠️ RE-SOLVED 2026-08-19 for the in-bonus meter firing on every refill. An earned bonus now spins the
+# free-spin wheel about twice instead of once, and this is where that is paid for: each tier's mean entry
+# is trimmed (24.70 -> 22.81, 46.00 -> 43.77, 77.81 -> 76.03 balls) so a bonus is worth what it was, while
+# `BONUS_IN_DROP_RATE` keeps the flat 2% incidence untouched. The wheel's PAINTED values are unchanged and
+# every wedge keeps a non-zero weight, so nothing on screen moves and none is unreachable.
 BONUS_WHEEL_WEIGHTS_BY_BALLS: dict[int, list[float]] = {
-    10: [1, 2, 7, 23, 71, 223, 696, 2176, 6801],
-    20: [386, 483, 604, 755, 945, 1182, 1479, 1851, 2315],
-    50: [2766, 2053, 1524, 1132, 840, 624, 463, 344, 255],
+    10: [1, 2, 7, 23, 71, 100, 120, 1807, 7869],
+    20: [357, 283, 504, 755, 945, 1182, 1479, 1851, 2644],
+    50: [2544, 2053, 1524, 1132, 840, 624, 463, 344, 476],
 }
 
 
@@ -495,11 +519,15 @@ def bonus_level_balls(level: int) -> int:
 # independent reads of superfury 0.00016 apart in probability disagreed by 0.12% for that reason. The
 # tier-to-tier residual above is inside that band; re-solving on it just moves noise around.
 # Re-run `rtp_audit.py` after any nudge; do not interpolate.
+# ⚠️ `peg_hit_prob` RE-SOLVED 2026-08-19 alongside `IN_BONUS_TARGET_CYCLES` and `FREE_SPIN_WEIGHTS` —
+# the three are ONE tuning now that the in-bonus meter fires on every refill. `entry_balls`, `cost` and
+# `wincap` were deliberately held FIXED through that re-solve: they are the advertised product, and the
+# cadence change is paid for out of the wheel's mean award and the level-up climb instead.
 BUY_BONUS_TIER_DEFS: list[dict] = [
-    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 250.0, "head_start": 0.0, "peg_hit_prob": 0.04487},
-    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 300.0, "head_start": 0.0, "peg_hit_prob": 0.02931},
-    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 350.0, "head_start": 0.0, "peg_hit_prob": 0.02515},
-    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 500.0, "head_start": 0.0, "peg_hit_prob": 0.02846},
+    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 250.0, "head_start": 0.0, "peg_hit_prob": 0.04599},
+    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 300.0, "head_start": 0.0, "peg_hit_prob": 0.02940},
+    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 350.0, "head_start": 0.0, "peg_hit_prob": 0.02511},
+    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 500.0, "head_start": 0.0, "peg_hit_prob": 0.02923},
 ]
 
 # Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
@@ -676,6 +704,48 @@ def scaled_spin_meter_max(balls_per_drop: int) -> int:
     """Per-drop free-spin meter max for this tier (1 if the tier has no free spin)."""
     cfg = SPIN_METER_TIER.get(int(balls_per_drop))
     return max(1, int(cfg["max"])) if cfg else 1
+
+
+# IN-BONUS free-spin meter bar — the bar the spin meter fills against WHILE A BONUS ROUND IS RUNNING.
+#
+# ⚠️ ITS OWN PINNED CONSTANT, deliberately NOT `scaled_spin_meter_max(balls_per_drop)` any more. The two
+# bars price completely different things: the drop-side one (`SPIN_METER_TIER`) sets how often a PAID
+# drop earns a free spin and is solved against the flat 2% bonus incidence, while this one sets how many
+# free spins a bonus round pays — and since 2026-08-19 the meter fires EVERY time it fills rather than
+# once per level batch, that is now a first-order RTP term instead of a rounding error.
+#
+# At the old shared value of 6 the refill rule paid 2.1 / 2.9 / 4.7 / 8.2 free spins per bought round
+# (+10.6 to +21.1 RTP points) and would have put a full-screen wheel on top of the bonus every few
+# seconds. This bar is what buys that back — and it is the RIGHT lever, because unlike cutting the entry
+# balls or raising the price it leaves the "fill → wheel → empty → fill again" cycle the feature is
+# about, just paced so a round shows a handful of cycles instead of a stack of them.
+#
+# ⚠️ Solved jointly with `BUY_BONUS_TIER_DEFS`. Moving it moves every buy tier's RTP roughly as 1/bar —
+# re-run `rtp_audit.py` and re-solve the tiers, never nudge it alone. The client mirrors it from the
+# book's in-bonus `spinMeter.max`, so it needs no matching web constant.
+# ⚠️ IT SCALES WITH THE ROUND, and it has to. A FLAT bar cannot serve both ends of this game: the four
+# buy tiers open on 72 / 95 / 145 / 239 balls and an earned bonus on ~25 / 46 / 78, so any single value
+# either drowns the biggest rounds in wheels or leaves the smallest never firing at all. Measured at a
+# flat 6: 2.3 / 3.0 / 4.8 / 8.6 wheels per bought round, and the four tiers landing 107.4 / 110.4 / 114.6
+# / 118.0% RTP — an 11-point spread against a 0.50% limit, from one constant.
+#
+# So the bar is sized from the round's own entry balls to land on `IN_BONUS_TARGET_CYCLES` fills, which
+# is what keeps the tiers comparable AND the pacing sane. The floor of 3 stops a tiny earned entry from
+# firing on its first two centre pockets.
+IN_BONUS_TARGET_CYCLES = 2.0
+# Share of bonus balls that land in the centre (spin) pocket — the 14-row board's centre probability,
+# 0.2095. Only used to SIZE the bar; the actual hits are per-ball flags on the book, never this number.
+IN_BONUS_SPIN_HITS_PER_BALL = 0.2095
+
+
+def in_bonus_spin_meter_max(entry_balls: int) -> int:
+    """Free-spin meter bar for a bonus round that opens on `entry_balls` (see the notes above).
+
+    Level-up balls land on top of the entry, so a round that climbs the ladder gets MORE cycles than the
+    target — which is the right way round: a bigger round should show more of the feature."""
+    balls = max(1, int(entry_balls))
+    sized = round(balls * IN_BONUS_SPIN_HITS_PER_BALL / max(0.1, IN_BONUS_TARGET_CYCLES))
+    return max(3, int(sized))
 
 
 def scaled_spin_meter_start(balls_per_drop: int) -> int:

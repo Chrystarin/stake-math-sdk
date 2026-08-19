@@ -18,6 +18,7 @@ from plinko_data import (
     bonus_wheel_free_balls,
     bonus_wheel_weights,
     coefficients_for,
+    in_bonus_spin_meter_max,
     scaled_spin_meter_max,
     spin_in_drop_for_balls,
     spin_pocket_active_for_balls,
@@ -129,6 +130,7 @@ class GameCalculations(Executables):
         entry_balls_override: int = 0,
         levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
+        spin_meter_max_override: int = 0,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -149,10 +151,28 @@ class GameCalculations(Executables):
         client's in-bonus max + reset; the per-ball fill/reset is client-driven (so it tracks the balls
         smoothly instead of jumping). The level-up itself stays server-authoritative here (peg counter).
 
-        IN-BONUS FREE SPIN: the spin meter also fills from the bonus balls' spin-pocket hits; if it tops
-        out (gated by `spin_in_drop`, off on 1-ball) the free spin fires ONCE as a TRAILING
-        `freeSpinTrigger` after all bonus balls — the client defers the wheel until the balls deplete and
-        adds `stake × M` to the bonus total. Numeric-only (re-pick if it lands BONUS) to avoid recursion.
+        IN-BONUS FREE SPIN: the spin meter also fills from the bonus balls' spin-pocket hits (gated by
+        `spin_in_drop`, off on 1-ball) and fires the free spin THE INSTANT IT COMPLETES — mid-batch, on
+        the very ball that filled it. Every step of that fill is published as a `spinMeter` event and each
+        batch carries its own `spinMeterStart` carry-in, so the client's bar is BOOK-DRIVEN and completes
+        on exactly the ball this walk completes it on. Numeric-only (re-pick if it lands BONUS) to avoid
+        recursion.
+
+        ⚠️ THE METER FIRES EVERY TIME IT FILLS, as many times per batch as the balls fill it — this is
+        the paid-for behaviour, not a free one. Until 2026-08-19 this walk counted spin hits UNBOUNDED and
+        tested the total ONCE, after the batch, so a batch paid at most one free spin however many spin
+        pockets it hit and the surplus was thrown away by the reset. On the published library that surplus
+        was 1.1 / 1.9 / 3.6 / 6.9 discarded fills per round on the four buy tiers — the bar spent most of
+        a bonus round visibly dead, which is what QA reported.
+
+        Honouring them costs ~7.64× stake-per-ball per extra fire (the mean numeric segment), i.e. +10.6
+        to +21.1 RTP points on the buy tiers, and `BUY_BONUS_TIER_DEFS` was re-solved to pay for it. ⚠️ So
+        `spin_max`, the buy tiers' `peg_hit_prob` / `entry_balls` / `cost` and this fire rule are now ONE
+        tuning: moving any of them without re-running `rtp_audit.py` breaks the others.
+
+        The client used to be told none of this (no in-bonus `spinMeter` events existed) and ran its own
+        free-running bar, which is why a full bar could sit there with no wheel behind it, and why two
+        book-authored free spins could fire off what looked like a single fill.
         """
         events: list[dict] = []
         feature_win = 0.0
@@ -170,13 +190,20 @@ class GameCalculations(Executables):
             )
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
+        # The IN-BONUS bar is sized from THIS round's entry, not from the tier's drop-side meter — see
+        # `in_bonus_spin_meter_max`. The override exists for `rtp_audit.py` to sweep it while solving.
+        spin_max = (
+            max(1, int(spin_meter_max_override))
+            if spin_meter_max_override > 0
+            else in_bonus_spin_meter_max(entry_balls)
+        )
+
         # Level-up peg threshold: the SHARED per-level escalating ladder (`bonus_levelup_pegs`) — frequent
         # at low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). Identical
         # in every mode; the buy tiers are gated by their lower `peg_hit_prob` instead of by a taller bar.
         def threshold_for(lvl: int) -> int:
             return bonus_levelup_pegs(lvl)
 
-        spin_max = scaled_spin_meter_max(balls_per_drop)
         spin_in_drop = spin_in_drop_for_balls(balls_per_drop)
         level = 1
         first_max = threshold_for(1)
@@ -214,10 +241,14 @@ class GameCalculations(Executables):
                     # Pegs to LEAVE this level (escalating) — the client sizes the energy bar / fires the
                     # combine-level-up at this threshold while these balls drop.
                     "levelupPegs": threshold_for(cur_level),
+                    # Spin meter carried INTO this batch. The meter runs across levels (it only resets
+                    # when it fires), so a batch can open part-full — the client seats its bar here rather
+                    # than re-deriving the carry from a level boundary the combine has already blurred.
+                    "spinMeterStart": spin_meter,
                 }
             )
             # Walk this batch's balls: coin pegs fill the energy meter → queue a level-up; spin-pocket
-            # hits fill the spin meter. The free spin fires PER LEVEL (below), before the level-up.
+            # hits fill the spin meter, which fires the free spin every time it completes.
             for outcome in outcomes:
                 if outcome.get("hitBonusPeg"):
                     meter += 1
@@ -228,30 +259,38 @@ class GameCalculations(Executables):
                         if extra > 0:
                             pending.append((level, extra))
                 if spin_in_drop and outcome.get("hitSpinSlot"):
-                    spin_meter += 1
-
-            # END OF THIS LEVEL: if the spin meter is full, fire the in-bonus free spin NOW — after this
-            # level's balls, but BEFORE the queued level-up's balls drop — then RESET the meter so a
-            # later level can fire it again (the free spin fires at the end of EVERY level it is full).
-            # The event is tagged with `level` so the client fires the wheel at the matching level
-            # boundary. Numeric only (re-roll a BONUS landing) to avoid a recursive bonus.
-            if spin_in_drop and spin_meter >= spin_max:
-                segment = self._pick_free_spin_segment()
-                while segment == "BONUS":
-                    segment = self._pick_free_spin_segment()
-                multiplier = self._free_spin_segment_multiplier(segment)
-                free_spin_win = stake_per_ball * multiplier
-                feature_win += free_spin_win
-                events.append(
-                    {
-                        "type": "freeSpinTrigger",
-                        "segment": segment,
-                        "multiplier": multiplier,
-                        "amount": free_spin_win,
-                        "level": cur_level,
-                    }
-                )
-                spin_meter = 0
+                    spin_meter = min(spin_max, spin_meter + 1)
+                    events.append(
+                        {"type": "spinMeter", "value": spin_meter, "max": spin_max}
+                    )
+                    if spin_meter >= spin_max:
+                        # THE BAR JUST COMPLETED — fire here, on this ball, so the wheel follows the fill
+                        # the player watched instead of trailing to the next level boundary. No per-batch
+                        # lock: the bar resets below and the batch's remaining balls fill it again, as
+                        # many times as they can. Numeric only (re-roll a BONUS landing) to avoid a
+                        # recursive bonus.
+                        segment = self._pick_free_spin_segment()
+                        while segment == "BONUS":
+                            segment = self._pick_free_spin_segment()
+                        multiplier = self._free_spin_segment_multiplier(segment)
+                        free_spin_win = stake_per_ball * multiplier
+                        feature_win += free_spin_win
+                        events.append(
+                            {
+                                "type": "freeSpinTrigger",
+                                "segment": segment,
+                                "multiplier": multiplier,
+                                "amount": free_spin_win,
+                                "level": cur_level,
+                            }
+                        )
+                        spin_meter = 0
+                        # Publish the reset too: the client empties its bar on the same ball and starts
+                        # refilling from the next spin pocket, so "fill → wheel → empty → fill again"
+                        # stays in lockstep with this walk for the whole batch.
+                        events.append(
+                            {"type": "spinMeter", "value": 0, "max": spin_max}
+                        )
         return events, feature_win, level
 
     def _free_spin_segment_multiplier(self, segment: str) -> float:
