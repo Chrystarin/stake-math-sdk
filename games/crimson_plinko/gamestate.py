@@ -60,6 +60,10 @@ class GameState(GameStateOverride):
         # tiny, so its level-up ladder has to be climbed more slowly. Negative = "not supplied", which
         # falls back to `peg_hit_prob` for both (the pre-split behaviour, still correct for the buys).
         bonus_peg_hit_prob = float(conditions.get("bonus_peg_hit_prob", -1.0))
+        # DEEP-BONUS STRATUM: >0 on the tiny jackpot quota that climbs the ladder to its top rung. The
+        # climb is still made of real coin-peg hits — `simulate_bonus_round` tops each batch up rather
+        # than assigning the level. See `DEEP_BONUS_RATE`.
+        force_bonus_level = int(conditions.get("force_bonus_level", 0))
 
         self.repeat = True
         while self.repeat:
@@ -122,6 +126,7 @@ class GameState(GameStateOverride):
                 buy_levelup_head_start=buy_levelup_head_start,
                 peg_hit_prob=peg_hit_prob,
                 bonus_peg_hit_prob=bonus_peg_hit_prob,
+                force_bonus_level=force_bonus_level,
             )
             total_win += feature_win
 
@@ -169,6 +174,8 @@ class GameState(GameStateOverride):
                         # Free-spin meter carried INTO this batch (it runs across levels), so the
                         # client's bar completes on the same ball this book's walk completed it on.
                         spin_meter_start=int(event.get("spinMeterStart", 0)),
+                        # ...and the bar it fills against, which grows with the round's ball supply.
+                        spin_meter_max=int(event.get("spinMeterMax", 0)),
                     )
                 elif event_type == "spinMeter":
                     spin_meter_event(self, value=event["value"], max_value=event["max"])

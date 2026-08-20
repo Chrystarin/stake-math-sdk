@@ -32,6 +32,9 @@ from plinko_data import (
     scaled_spin_meter_start,
     spin_in_drop_for_balls,
     wincap_for_balls,
+    DEEP_BONUS_TARGET_LEVELS,
+    deep_bonus_rate,
+    deep_bonus_total_rate,
 )
 
 # Math package folder (make run GAME=crimson_plinko); RGS gameID is one_eyed_willys_plinko.
@@ -84,6 +87,7 @@ class GameConfig(Config):
             bonus_meter_start: int = 0,
             bonus_level_start: int = 0,
             force_bonus: bool = False,
+            force_bonus_level: int = 0,
             suppress_features: bool = False,
             spin_in_drop: bool = False,
             bonus_in_drop: bool = False,
@@ -119,6 +123,9 @@ class GameConfig(Config):
                 # cannot be both. Negative = fall back to `peg_hit_prob` (correct for the buy modes,
                 # whose paid drop is empty so only the in-bonus value ever applied).
                 "bonus_peg_hit_prob": float(bonus_peg_hit_prob),
+                # DEEP-BONUS STRATUM: target bonus level for the tiny jackpot quota (0 = ordinary
+                # round). The climb is made of real coin-peg hits, not assigned — see DEEP_BONUS_RATE.
+                "force_bonus_level": int(force_bonus_level),
                 "reel_weights": {},
                 "force_wincap": False,
                 "force_freegame": False,
@@ -143,7 +150,11 @@ class GameConfig(Config):
             spin_in_drop = spin_in_drop_for_balls(balls)
             bonus_in_drop = bonus_in_drop_for_balls(balls)
             rate = bonus_in_drop_rate(balls) if bonus_possible_for_balls(balls) else 0.0
-            normal_quota = max(0.0, 1.0 - rate)
+            # DEEP-BONUS jackpot quota (0 on the feature-free 1-ball tier). Carved out of the normal
+            # stratum like the bonus quota above it.
+            deep_rate = deep_bonus_rate(mode_name) if bonus_possible_for_balls(balls) else 0.0
+            deep_total = deep_bonus_total_rate(mode_name) if bonus_possible_for_balls(balls) else 0.0
+            normal_quota = max(0.0, 1.0 - rate - deep_total)
             peg_prob = bonus_peg_hit_prob(mode_name)
             # Separate in-bonus climb rate (see BONUS_ROUND_PEG_HIT_PROB_BY_MODE). Falls back to
             # `peg_prob` for any mode without its own entry.
@@ -187,6 +198,30 @@ class GameConfig(Config):
                         ),
                     ),
                 )
+            # DEEP-BONUS JACKPOT strata — the ONLY books in the library that finish above the organic
+            # ceiling, ONE PER TARGET LEVEL so 6/7/8 are real endings and not just rungs a level-9 climb
+            # passes through (see plinko_data.DEEP_BONUS_TARGET_LEVELS). Identical to the forced-bonus
+            # stratum above except that the bonus round is also made to climb: `simulate_bonus_round`
+            # tops each level's batch up to that rung's coin-peg threshold, so the energy bar fills
+            # 0 → threshold at every rung from real hits.
+            for target in DEEP_BONUS_TARGET_LEVELS if deep_rate > 0.0 else ():
+                distributions.append(
+                    Distribution(
+                        criteria=f"basegame_deepbonus_L{target}_balls_{balls}",
+                        quota=deep_rate,
+                        conditions=plinko_conditions(
+                            balls_per_drop=balls,
+                            spin_meter_start=spin_start,
+                            bonus_meter_start=bonus_start,
+                            spin_in_drop=spin_in_drop,
+                            bonus_in_drop=bonus_in_drop,
+                            force_bonus=True,
+                            force_bonus_level=target,
+                            peg_hit_prob=peg_prob,
+                            bonus_peg_hit_prob=bonus_peg,
+                        ),
+                    ),
+                )
 
             self.bet_modes.append(
                 BetMode(
@@ -215,6 +250,36 @@ class GameConfig(Config):
         # thin tail (achievable advertised max). Mirror in web config.ts.
         for tier in BUY_BONUS_TIER_DEFS:
             name = buy_bonus_mode_name(tier["key"])
+            buy_deep_rate = deep_bonus_rate(name)
+            buy_deep_total = deep_bonus_total_rate(name)
+            buy_conditions = dict(
+                balls_per_drop=BUY_BONUS_BALLS_PER_DROP_REF,
+                force_bonus=True,
+                bonus_only=True,
+                buy_entry_balls=int(tier["entry_balls"]),
+                buy_levelup_head_start=float(tier.get("head_start", 0.0)),
+                peg_hit_prob=bonus_peg_hit_prob(name),
+                spin_in_drop=False,
+                bonus_in_drop=False,
+            )
+            buy_distributions = [
+                Distribution(
+                    criteria=f"buybonus_{name}",
+                    quota=max(0.0, 1.0 - buy_deep_total),
+                    conditions=plinko_conditions(**buy_conditions),
+                ),
+            ]
+            # DEEP-BONUS JACKPOT strata, same as the base tiers': a bought round that climbs off real
+            # coin-peg hits, one stratum per target level. A buy already opens on a full meter, so the
+            # only difference from the stratum above is the forced climb.
+            for target in DEEP_BONUS_TARGET_LEVELS if buy_deep_rate > 0.0 else ():
+                buy_distributions.append(
+                    Distribution(
+                        criteria=f"buybonus_deep_L{target}_{name}",
+                        quota=buy_deep_rate,
+                        conditions=plinko_conditions(**buy_conditions, force_bonus_level=target),
+                    ),
+                )
             self.bet_modes.append(
                 BetMode(
                     name=name,
@@ -224,27 +289,7 @@ class GameConfig(Config):
                     auto_close_disabled=False,
                     is_feature=False,
                     is_buybonus=True,
-                    distributions=[
-                        Distribution(
-                            criteria=f"buybonus_{name}",
-                            quota=1.0,
-                            conditions=plinko_conditions(
-                                balls_per_drop=BUY_BONUS_BALLS_PER_DROP_REF,
-                                force_bonus=True,
-                                bonus_only=True,
-                                buy_entry_balls=int(tier["entry_balls"]),
-                                buy_levelup_head_start=float(tier.get("head_start", 0.0)),
-                                # Buys climb the SAME level-up ladder as an earned bonus; this lower
-                                # per-ball coin-peg probability is what keeps the big fixed entry batch
-                                # from running the ×10 award cascade away to level 9.
-                                peg_hit_prob=bonus_peg_hit_prob(name),
-                                # In-bonus free spin stays on (off only on 1-ball); no in-drop spin/bonus
-                                # since the buy drop is empty.
-                                spin_in_drop=False,
-                                bonus_in_drop=False,
-                            ),
-                        ),
-                    ],
+                    distributions=buy_distributions,
                 ),
             )
 

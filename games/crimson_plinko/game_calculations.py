@@ -18,7 +18,7 @@ from plinko_data import (
     bonus_wheel_free_balls,
     bonus_wheel_weights,
     coefficients_for,
-    in_bonus_spin_meter_max,
+    in_bonus_spin_meter_max_at_level,
     scaled_spin_meter_max,
     spin_in_drop_for_balls,
     spin_pocket_active_for_balls,
@@ -131,6 +131,7 @@ class GameCalculations(Executables):
         levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
         spin_meter_max_override: int = 0,
+        force_level: int = 0,
     ) -> tuple[list[dict], float, int]:
         """
         Simulate a MULTI-LEVEL bonus round (FOLDED-bonus design — the bonus is FREE, funded by the base).
@@ -190,13 +191,16 @@ class GameCalculations(Executables):
             )
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        # The IN-BONUS bar is sized from THIS round's entry, not from the tier's drop-side meter — see
-        # `in_bonus_spin_meter_max`. The override exists for `rtp_audit.py` to sweep it while solving.
-        spin_max = (
-            max(1, int(spin_meter_max_override))
-            if spin_meter_max_override > 0
-            else in_bonus_spin_meter_max(entry_balls)
-        )
+        # The IN-BONUS bar is sized from THIS round's own ball supply, not from the tier's drop-side
+        # meter and not from the entry alone — see `in_bonus_spin_meter_max_at_level`. It is recomputed
+        # per batch below, so a round that climbs the ladder keeps ~`IN_BONUS_TARGET_CYCLES` fills per
+        # level instead of one wheel every few balls. The override pins it flat for `rtp_audit.py`.
+        def spin_max_for(level: int) -> int:
+            if spin_meter_max_override > 0:
+                return max(1, int(spin_meter_max_override))
+            return in_bonus_spin_meter_max_at_level(entry_balls, level)
+
+        spin_max = spin_max_for(1)
 
         # Level-up peg threshold: the SHARED per-level escalating ladder (`bonus_levelup_pegs`) — frequent
         # at low levels, progressively harder at higher ones (tames the ×10 ladder's snowball). Identical
@@ -222,6 +226,9 @@ class GameCalculations(Executables):
         pending: list[tuple[int, int]] = [(1, entry_balls)]
         while pending:
             cur_level, batch_balls = pending.pop(0)
+            # Re-size the bar for THIS batch's level. Monotonic (see `in_bonus_spin_meter_max_at_level`),
+            # so the carry-in below is always ≤ the new bar and can never open a batch already full.
+            spin_max = spin_max_for(cur_level)
             outcomes, batch_win = self.build_drop_outcomes(
                 row_count=row_count,
                 balls_per_drop=batch_balls,
@@ -230,6 +237,19 @@ class GameCalculations(Executables):
                 tier_balls_per_drop=balls_per_drop,
                 peg_hit_prob=peg_hit_prob,
             )
+            # DEEP-BONUS STRATUM: this book was selected to climb to `force_level`, so top this batch's
+            # coin pegs up to what THIS rung costs — `threshold_for(level)` hits, less whatever the meter
+            # already carries. The walk below then levels up off REAL `hitBonusPeg` flags, spread across
+            # the batch by `ensure_coin_pegs_fill_meter`, so the energy bar fills 0 → threshold on screen
+            # at every rung instead of the level being handed over. Same device, and the same EV-neutrality
+            # argument, as the `force_bonus` trigger drop: coin pegs are sampled independently of the
+            # pocket, so nothing about what these balls PAY changes.
+            #
+            # Every rung has room to be forced — the tightest is level 2 (8 hits from a 20-ball batch).
+            # A batch that happens to roll MORE hits than its rung costs simply levels up twice inside
+            # itself; both awards still queue, so the ball count and the destination are unchanged.
+            if force_level > 0 and level < min(int(force_level), MAX_BONUS_LEVEL):
+                self.ensure_coin_pegs_fill_meter(outcomes, max(0, threshold_for(level) - meter))
             feature_win += batch_win
             events.append(
                 {
@@ -245,6 +265,11 @@ class GameCalculations(Executables):
                     # when it fires), so a batch can open part-full — the client seats its bar here rather
                     # than re-deriving the carry from a level boundary the combine has already blurred.
                     "spinMeterStart": spin_meter,
+                    # ...and the bar that carry is measured against, which now GROWS per level
+                    # (`in_bonus_spin_meter_max_at_level`). The client cannot take this from the
+                    # `spinMeter` events alone: a batch whose balls hit no centre pocket emits none, and
+                    # the bar would render against the previous, smaller level's max.
+                    "spinMeterMax": spin_max,
                 }
             )
             # Walk this batch's balls: coin pegs fill the energy meter → queue a level-up; spin-pocket
@@ -325,6 +350,7 @@ class GameCalculations(Executables):
         buy_levelup_head_start: float = 0.0,
         peg_hit_prob: float = BONUS_PEG_HIT_PROB,
         bonus_peg_hit_prob: float = -1.0,
+        force_bonus_level: int = 0,
     ) -> tuple[list[dict], float, int, int, int]:
         """
         Walk server-authored ball flags and emit meter / feature book events.
@@ -437,6 +463,8 @@ class GameCalculations(Executables):
                 # ladder is the shared one; the tier's own `peg_hit_prob` is what gates the climb.
                 entry_balls_override=buy_entry_balls,
                 levelup_head_start=buy_levelup_head_start,
+                # DEEP-BONUS STRATUM: >0 makes this round climb to that level off real coin-peg hits.
+                force_level=force_bonus_level,
                 peg_hit_prob=bonus_peg,
             )
             events.extend(bonus_events)

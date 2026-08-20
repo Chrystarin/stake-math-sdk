@@ -44,6 +44,7 @@ from plinko_data import (
     bonus_round_peg_hit_prob,
     bonus_wheel_mean_entry,
     buy_bonus_mode_name,
+    deep_bonus_total_rate,
     coefficients_for,
     scaled_bonus_meter_max,
     scaled_bonus_meter_start,
@@ -201,7 +202,8 @@ def cap_rate(bonus_raw: list, wincap: float) -> float:
 # ---------------------------------------------------------------------------
 
 def base_mode_rtp(
-    gs: GameState, balls: int, bonus: dict, *, quota: float, wincap: float, peg: float
+    gs: GameState, balls: int, bonus: dict, *, quota: float, wincap: float, peg: float,
+    deep: float = 0.0,
 ) -> dict:
     """Expected payout multiple / cost for a base tier, given its bonus stats and quota.
 
@@ -232,9 +234,18 @@ def base_mode_rtp(
 
     e_norm = balls * board + spin_add + p_bonus * b_val - p_any_norm * excess
     e_forced = balls * board + spin_add + b_val - p_any_forced * excess
-    rtp = ((1.0 - quota) * e_norm + quota * e_forced) / balls
+    # DEEP-BONUS strata: a forced round is worth hundreds-to-thousands of x and every wincap clips it
+    # from level 6 up, so EVERY target level's book settles at EXACTLY the cap — no sampling needed, and no cap-excess term (there is nothing above the
+    # cap left to subtract). Tiny, but it must be in the model: a solver that ignores a stratum silently
+    # mis-attributes its cost to whichever lever it IS solving.
+    e_deep = wincap
+    rtp = ((1.0 - quota - deep) * e_norm + quota * e_forced + deep * e_deep) / balls
     denom = e_forced - e_norm
-    solved = 0.0 if denom <= 1e-9 else max(0.0, min(1.0, (TARGET_RTP * balls - e_norm) / denom))
+    solved = (
+        0.0
+        if denom <= 1e-9
+        else max(0.0, min(1.0, (TARGET_RTP * balls - (1.0 - deep) * e_norm - deep * e_deep) / denom))
+    )
     return {
         "e_norm": e_norm,
         "e_forced": e_forced,
@@ -247,14 +258,15 @@ def base_mode_rtp(
     }
 
 
-def buy_mode_rtp(gs: GameState, tier: dict, bonus: dict) -> dict:
+def buy_mode_rtp(gs: GameState, tier: dict, bonus: dict, *, deep: float = 0.0) -> dict:
     """Expected payout multiple / cost for a buy tier (bonus only, empty paid drop)."""
     wincap = float(tier["wincap"])
     cost = float(tier["cost"])
     raw = bonus["raw"]
     excess = math.fsum(max(0.0, w - wincap) for w in raw) / len(raw)
+    # DEEP-BONUS stratum settles at the cap — see the note in `base_mode_rtp`.
     return {
-        "rtp": (bonus["value"] - excess) / cost,
+        "rtp": ((1.0 - deep) * (bonus["value"] - excess) + deep * wincap) / cost,
         "se": bonus["se"] / cost,
         "cap_rate": cap_rate(raw, wincap),
         "max_win": min(max(raw), wincap),
@@ -298,11 +310,12 @@ def main() -> None:
         peg = bonus_peg_hit_prob(mode_name)
         bonus_peg = bonus_round_peg_hit_prob(mode_name)
         bonus = bonus_stats(gs, tier_balls=balls, n=n, peg_prob=bonus_peg)
-        r = base_mode_rtp(gs, balls, bonus, quota=quota, wincap=wincap, peg=peg)
+        deep = deep_bonus_total_rate(mode_name)
+        r = base_mode_rtp(gs, balls, bonus, quota=quota, wincap=wincap, peg=peg, deep=deep)
         rows.append((mode, r["rtp"], r["se"]))
         # Total bonus incidence per bet — the meter/quota path OR the free-spin wheel chaining one.
         # This is the number the flat-rate design pins, so surface it next to the RTP.
-        p_trigger = quota + (1.0 - quota) * r["p_bonus"]
+        p_trigger = quota + deep + (1.0 - quota - deep) * r["p_bonus"]
         incidence[mode] = 1.0 - (1.0 - p_trigger) * (1.0 - r["p_spin"] * free_spin_cash_ev()[1])
         print(f"{mode:>13} {float(balls):>5.0f} {wincap:>5.0f} {r['p_spin']:>9.5f} "
               f"{r['p_bonus']:>9.5f} {quota:>9.5f} {r['solved_quota']:>9.5f} "
@@ -321,7 +334,7 @@ def main() -> None:
             head_start=float(tier.get("head_start", 0.0)),
             peg_prob=bonus_round_peg_hit_prob(name),
         )
-        r = buy_mode_rtp(gs, tier, bonus)
+        r = buy_mode_rtp(gs, tier, bonus, deep=deep_bonus_total_rate(name))
         rows.append((name, r["rtp"], r["se"]))
         print(f"{name:>13} {float(tier['cost']):>5.0f} {float(tier['wincap']):>5.0f} "
               f"{int(tier['entry_balls']):>6} {bonus_peg_hit_prob(name):>7.4f} "

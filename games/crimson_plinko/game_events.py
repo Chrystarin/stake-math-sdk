@@ -82,6 +82,7 @@ def bonus_round_event(
     balls_played: int = 0,
     levelup_pegs: int = 0,
     spin_meter_start: int = 0,
+    spin_meter_max: int = 0,
 ) -> None:
     """One bonus level's batch of free balls.
 
@@ -93,7 +94,12 @@ def bonus_round_event(
     `spin_meter_start` is the FREE-SPIN meter carried into this batch. That meter runs across levels
     (it resets only when it fires), so a batch can open part-full, and the client cannot recover the
     carry from its own level boundaries once `combineNextBonusLevelNow` has merged two levels' balls
-    into one pool. Always emitted — 0 is a real, meaningful value here, unlike `levelupPegs`."""
+    into one pool. Always emitted — 0 is a real, meaningful value here, unlike `levelupPegs`.
+
+    `spin_meter_max` is the bar that carry is measured against. It GROWS per level
+    (`in_bonus_spin_meter_max_at_level`), and a batch whose balls miss the centre pocket entirely emits
+    no `spinMeter` event, so the client cannot infer the new bar from those alone — without this field it
+    would draw the batch against the previous level's smaller max and read as full too early."""
     event = {
         "index": len(gamestate.book.events),
         "type": "bonusRound",
@@ -105,6 +111,8 @@ def bonus_round_event(
     }
     if int(levelup_pegs) > 0:
         event["levelupPegs"] = int(levelup_pegs)
+    if int(spin_meter_max) > 0:
+        event["spinMeterMax"] = int(spin_meter_max)
     gamestate.book.add_event(event)
 
 

@@ -474,6 +474,8 @@ def bonus_level_balls(level: int) -> int:
     return int(BONUS_LEVEL_BALLS.get(int(level), 0))
 
 
+
+
 # ---------------------------------------------------------------------------
 # BUY BONUS — 4 purchasable tiers that instantly trigger the bonus (is_buybonus modes).
 # ---------------------------------------------------------------------------
@@ -523,11 +525,18 @@ def bonus_level_balls(level: int) -> int:
 # the three are ONE tuning now that the in-bonus meter fires on every refill. `entry_balls`, `cost` and
 # `wincap` were deliberately held FIXED through that re-solve: they are the advertised product, and the
 # cadence change is paid for out of the wheel's mean award and the level-up climb instead.
+# ⚠️ RE-SOLVED AGAIN 2026-08-20 (0.04599/0.02940/0.02511/0.02923 -> the values below) for the PER-LEVEL
+# in-bonus spin bar (`in_bonus_spin_meter_max_at_level`), which fires fewer wheels once a round leaves
+# level 1 and cost these tiers -0.50 / -0.17 / -0.08 / -0.16 RTP points. `entry_balls`, `cost` and
+# `wincap` were again held FIXED — same reason. Solved with `solve_in_bonus_peg.py`; response is
+# 3.12 / 2.87 / 3.38 / 2.87 RTP points per 0.01, and CONVEX, so re-measure rather than interpolate.
+# ⚠️ `standard` is the noisy one: its secant landed 0.174% under target at 0.04646, which is only ~1.8
+# of its own SE, so the value below is that point slope-corrected rather than measured directly.
 BUY_BONUS_TIER_DEFS: list[dict] = [
-    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 250.0, "head_start": 0.0, "peg_hit_prob": 0.04599},
-    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 300.0, "head_start": 0.0, "peg_hit_prob": 0.02940},
-    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 350.0, "head_start": 0.0, "peg_hit_prob": 0.02511},
-    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 500.0, "head_start": 0.0, "peg_hit_prob": 0.02923},
+    {"key": "standard", "entry_balls": 72, "cost": 80.0, "wincap": 250.0, "head_start": 0.0, "peg_hit_prob": 0.04702},
+    {"key": "enhanced", "entry_balls": 95, "cost": 100.0, "wincap": 300.0, "head_start": 0.0, "peg_hit_prob": 0.02989},
+    {"key": "premium", "entry_balls": 145, "cost": 150.0, "wincap": 350.0, "head_start": 0.0, "peg_hit_prob": 0.02532},
+    {"key": "superfury", "entry_balls": 239, "cost": 250.0, "wincap": 500.0, "head_start": 0.0, "peg_hit_prob": 0.02962},
 ]
 
 # Fixed balls-per-drop reference for a buy's bonus sim — only affects in-bonus free-spin gating + meter-
@@ -630,10 +639,22 @@ def bonus_peg_hit_prob(mode_name: str) -> float:
 # low tiers climb slowly (0.10, avg level 1.11-1.50) since their whole bonus budget is ~2.8x the bet.
 # The buy modes are deliberately ABSENT — they fall back to their own `BONUS_PEG_HIT_PROB_BY_MODE`
 # value, which was always an in-bonus number (their paid drop is empty), so nothing about them moves.
+# ⚠️ RE-SOLVED 2026-08-20 for the PER-LEVEL in-bonus spin bar (`in_bonus_spin_meter_max_at_level`).
+# Sizing that bar from the round's supply instead of its entry fires fewer wheels on any round that
+# leaves level 1, which cost -0.007 / -0.086 / -0.214 RTP points here (the size of the loss tracks how
+# often a tier climbs: 91.6% of 10-ball bonuses never leave level 1, only 7.5% of 50-ball ones).
+#
+# ⚠️ THIS LEVER, NOT THE QUOTA, because the two price different things. `BONUS_IN_DROP_RATE` moves how
+# OFTEN a bonus arrives — the flat 2.000% this game pins — while the bar moved what one is WORTH, and a
+# cost on the worth side has to be paid back on the worth side. Solved with `solve_in_bonus_peg.py`
+# (common random numbers across candidates, so the local derivative is clean); measured incidence is
+# unchanged at 2.0005% / 1.9997% / 1.9997%.
+# Response: 0.13 / 0.19 / 0.37 RTP points per 0.01 of probability. Still well under the 0.18 self-sustain
+# threshold — do not interpolate past it, re-measure (rtp_audit.py).
 BONUS_ROUND_PEG_HIT_PROB_BY_MODE: dict[str, float] = {
-    "tendrop": 0.10,
-    "twentydrop": 0.10,
-    "fiftydrop": 0.16,
+    "tendrop": 0.10287,
+    "twentydrop": 0.10319,
+    "fiftydrop": 0.16466,
 }
 
 
@@ -644,6 +665,82 @@ def bonus_round_peg_hit_prob(mode_name: str) -> float:
     if name in BONUS_ROUND_PEG_HIT_PROB_BY_MODE:
         return float(BONUS_ROUND_PEG_HIT_PROB_BY_MODE[name])
     return bonus_peg_hit_prob(name)
+
+
+# ---------------------------------------------------------------------------
+# DEEP-BONUS JACKPOT STRATUM — the only way the top of the ladder is ever reached.
+# ---------------------------------------------------------------------------
+# ⚠️ WITHOUT THIS, LEVELS 6-9 DO NOT EXIST. The escalating ladder costs 491 cumulative coin-peg hits to
+# climb, and at the in-bonus probabilities each mode is tuned to, the organic odds of a level-9 round are
+# 5e-8 (50-ball, the most generous) down to 1e-259 (buypremium). The published library was measured and
+# contains no book above level 5 on ANY mode — so the RGS, which only ever serves library books, could
+# not deliver one. `BONUS_LEVEL_LABELS` paints nine rungs and the game rules promise all nine; this
+# stratum is what makes the top four true.
+#
+# ⚠️ IT IS NOT A METER BYPASS — the same standard `BONUS_IN_DROP_RATE`'s quota is held to. A selected
+# book climbs every rung from REAL `hitBonusPeg` flags: `simulate_bonus_round` tops up each batch's coin
+# pegs (`ensure_coin_pegs_fill_meter`, spread across the batch) so the energy bar fills 0 → threshold
+# eight times over, on screen, exactly as the rules describe. EV-neutral by construction: `hitBonusPeg`
+# is sampled independently of the pocket a ball lands in, so flipping it changes nothing about what the
+# ball pays. Every batch has room — the tightest rung is level 2, which needs 8 hits from 20 balls, and
+# the loosest is level 8 at 205 from 1,280.
+#
+# ⚠️ WHY IT IS AFFORDABLE. A level-9 round drops entry + 5,100 balls, worth ~4,600x stake-per-ball, but
+# every mode's wincap clips it — and the cap already binds from level 6 up, so a forced level 9 pays
+# EXACTLY what an organic level 6 would. The cost is therefore `rate x (wincap - normal payout) / cost`,
+# which at these rates is 0.001-0.002 RTP points per mode: two orders of magnitude under the +-0.05%
+# the tuning itself is uncertain to. Do not re-solve anything for it.
+#
+# ⚠️ THE RATE HAS A FLOOR AT ONE BOOK PER LIBRARY. `run_sims.get_sim_splits` allocates
+# `max(int(num_sims * quota), 1)` books to a stratum, and the LUT weights every book equally, so the
+# DELIVERED rate is `max(rate, 1 / num_sim)` — with run.py's sim counts that is 1/1.8M (10-ball), 1/1M
+# (20-ball), 1/400k (50-ball) and 1/200k (each buy). Asking for anything rarer than that silently gets
+# the floor instead. Raising a mode's `num_sim` is the only way to go rarer.
+#
+# ⚠️ THIS IS THE PRODUCT DIAL, and it is the one number here worth arguing about. It does not need a
+# re-solve to change — pick the rate the feature should have and re-run `rtp_audit.py` to confirm it is
+# still lost in the noise. It also adds itself to the flat 2% bonus incidence (+0.0002%), which is far
+# inside that design's own 0.0008% spread.
+# ⚠️ ONE STRATUM PER TARGET LEVEL, NOT JUST THE TOP ONE. Forcing only level 9 left the published
+# histogram jumping straight from the organic ceiling (L3 on 10-ball, L5 on 50-ball) to L9, with 6/7/8
+# never a round's FINAL level. They were still lit on the way up — a level-9 climb passes through every
+# rung — but no round ever ended on one, which makes three of the nine painted rungs a place the ladder
+# only ever travels through. A stratum each fixes that.
+#
+# ⚠️ EVERY ONE OF THESE COSTS THE SAME, which is why spreading is nearly free. The wincap already binds
+# from level 6 up (measured: P(cap) = 1.000 at L6 on every mode), so a forced L6 and a forced L9 settle
+# at exactly the same number — the mode's cap. The only thing the target level changes is how far the
+# on-screen ladder climbs and how many balls the round drops.
+DEEP_BONUS_TARGET_LEVELS: tuple[int, ...] = (6, 7, 8, 9)
+# Deepest rung, for callers that just want the top of the ladder.
+DEEP_BONUS_TARGET_LEVEL = max(DEEP_BONUS_TARGET_LEVELS)
+
+# Requested rate PER TARGET LEVEL, per published mode: each of levels 6..9 finishes about one bet in
+# 500,000, so a deep bonus of some depth is ~1 in 125,000.
+#
+# ⚠️ THE FLOOR BITES HARDER NOW. `run_sims.get_sim_splits` gives every stratum
+# `max(int(num_sims * quota), 1)` books, and there are now FOUR of them per mode, so a small library
+# delivers one book per level regardless of the rate asked for: at run.py's sim counts that is 1 in
+# 400,000 per level on 50-ball and 1 in 200,000 on each buy. Only 10-ball and 20-ball are big enough to
+# express anything finer. A taper (deeper = rarer) is therefore only meaningful on those two, which is
+# why this is a flat rate rather than a weighted one — re-check that if the sim counts ever grow.
+DEEP_BONUS_RATE: dict[str, float] = {
+    **{bet_mode_for_balls_per_drop(balls): 2e-6 for balls in BALLS_PER_DROP_OPTIONS},
+    **{buy_bonus_mode_name(tier["key"]): 2e-6 for tier in BUY_BONUS_TIER_DEFS},
+}
+# The FEATURE-FREE 1-ball tier has no bonus at all, so it has no deep stratum either.
+DEEP_BONUS_RATE[bet_mode_for_balls_per_drop(1)] = 0.0
+
+
+def deep_bonus_rate(mode_name: str) -> float:
+    """Quota forced to EACH target level in `DEEP_BONUS_TARGET_LEVELS` (0 = no deep stratum at all)."""
+    return float(DEEP_BONUS_RATE.get(str(mode_name), 0.0))
+
+
+def deep_bonus_total_rate(mode_name: str) -> float:
+    """Quota of a mode's books that are forced deep at ANY target level — what RTP models must use."""
+    return deep_bonus_rate(mode_name) * len(DEEP_BONUS_TARGET_LEVELS)
+
 
 
 def _js_round(value: float) -> int:
@@ -722,16 +819,22 @@ def scaled_spin_meter_max(balls_per_drop: int) -> int:
 #
 # ⚠️ Solved jointly with `BUY_BONUS_TIER_DEFS`. Moving it moves every buy tier's RTP roughly as 1/bar —
 # re-run `rtp_audit.py` and re-solve the tiers, never nudge it alone. The client mirrors it from the
-# book's in-bonus `spinMeter.max`, so it needs no matching web constant.
+# book's in-bonus `spinMeter.max` + `bonusRound.spinMeterMax`, so it needs no matching web constant.
 # ⚠️ IT SCALES WITH THE ROUND, and it has to. A FLAT bar cannot serve both ends of this game: the four
 # buy tiers open on 72 / 95 / 145 / 239 balls and an earned bonus on ~25 / 46 / 78, so any single value
 # either drowns the biggest rounds in wheels or leaves the smallest never firing at all. Measured at a
 # flat 6: 2.3 / 3.0 / 4.8 / 8.6 wheels per bought round, and the four tiers landing 107.4 / 110.4 / 114.6
 # / 118.0% RTP — an 11-point spread against a 0.50% limit, from one constant.
 #
-# So the bar is sized from the round's own entry balls to land on `IN_BONUS_TARGET_CYCLES` fills, which
-# is what keeps the tiers comparable AND the pacing sane. The floor of 3 stops a tiny earned entry from
-# firing on its first two centre pockets.
+# So the bar targets `IN_BONUS_TARGET_CYCLES` fills per batch. The floor of 3 stops a tiny earned entry
+# from firing on its first two centre pockets.
+#
+# ⚠️ IT IS SIZED PER LEVEL, NOT ONCE PER ROUND (2026-08-20). It used to be sized from the entry balls
+# and then frozen, which priced only the level-1 batch and then handed the same bar every level-up award
+# as well — up to 2,540 further balls. Since the meter fires on EVERY fill that made a deep round one
+# long wheel: 358 / 216 / 136 wheels on a level-9 climb at the 10 / 20 / 50-ball entries. Sizing each
+# batch from the supply at its level (`in_bonus_spin_meter_max_at_level`) brings a full nine-level climb
+# to ~7-10 wheels and leaves level 1 — where nearly all the bonus EV is — untouched.
 IN_BONUS_TARGET_CYCLES = 2.0
 # Share of bonus balls that land in the centre (spin) pocket — the 14-row board's centre probability,
 # 0.2095. Only used to SIZE the bar; the actual hits are per-ball flags on the book, never this number.
@@ -739,13 +842,46 @@ IN_BONUS_SPIN_HITS_PER_BALL = 0.2095
 
 
 def in_bonus_spin_meter_max(entry_balls: int) -> int:
-    """Free-spin meter bar for a bonus round that opens on `entry_balls` (see the notes above).
+    """Free-spin meter bar for a batch of `entry_balls` balls (see the notes above).
 
-    Level-up balls land on top of the entry, so a round that climbs the ladder gets MORE cycles than the
-    target — which is the right way round: a bigger round should show more of the feature."""
+    ⚠️ SIZE THIS AGAINST THE ROUND'S CURRENT BALL SUPPLY, NOT ITS ENTRY — use
+    `in_bonus_spin_meter_max_at_level`. Called with the entry alone it prices only the level-1 batch,
+    and the ×2 award ladder then feeds that bar up to 2,540 further balls it was never sized for."""
     balls = max(1, int(entry_balls))
     sized = round(balls * IN_BONUS_SPIN_HITS_PER_BALL / max(0.1, IN_BONUS_TARGET_CYCLES))
     return max(3, int(sized))
+
+
+def in_bonus_supply(entry_balls: int, level: int) -> int:
+    """Total balls a bonus round has been awarded once it reaches `level` — entry + every level-up
+    award up to and including it. Pure function of (entry, level), so the client can reproduce it."""
+    lvl = max(1, min(int(level), MAX_BONUS_LEVEL))
+    return int(entry_balls) + sum(bonus_level_balls(l) for l in range(2, lvl + 1))
+
+
+def in_bonus_spin_meter_max_at_level(entry_balls: int, level: int) -> int:
+    """Free-spin meter bar for the batch played AT `level`, sized from the round's supply so far.
+
+    ⚠️ THIS REPLACES A ONCE-PER-ROUND BAR, and the old one did not survive the ladder. `spin_max` used
+    to be `in_bonus_spin_meter_max(entry_balls)` fixed for the whole round: correct for the entry batch,
+    then handed every level-up award as well. Since 2026-08-19 the meter fires on EVERY fill, so a deep
+    round did not get "more of the feature" — it got a full-screen wheel every few balls. Measured on a
+    level-9 climb at the published entries: 358 / 216 / 136 wheels on 10 / 20 / 50-ball, and 45–135 on
+    the buys. That is the round the ladder's top four levels currently cannot ship as.
+
+    Sizing from `in_bonus_supply` fixes it because the award ladder is ×2: batch L is about half the
+    supply at level L, so a bar priced off the supply is filled about once by its own batch, and a full
+    nine-level climb shows ~10 wheels instead of 358.
+
+    ⚠️ MONOTONIC BY CONSTRUCTION, and it has to be. The spin meter runs ACROSS batches (it resets only
+    when it fires), so each batch opens on the previous one's carry — `bonusRound.spinMeterStart`. A bar
+    that could SHRINK between batches would leave a carry sitting above its own max and fire the wheel on
+    the first hit of the batch. `in_bonus_supply` only grows, so the carry is always ≤ the new bar.
+
+    ⚠️ LEVEL 1 IS UNCHANGED (supply == entry), which is what keeps this affordable: the level-1 batch is
+    where nearly all the bonus EV lives (91.6% of 10-ball bonuses never leave it). The RTP that moves is
+    level 2+ — see `BONUS_IN_DROP_RATE` / `BUY_BONUS_TIER_DEFS`, re-solved with `rtp_audit.py`."""
+    return in_bonus_spin_meter_max(in_bonus_supply(entry_balls, level))
 
 
 def scaled_spin_meter_start(balls_per_drop: int) -> int:
