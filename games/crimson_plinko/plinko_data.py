@@ -840,6 +840,46 @@ IN_BONUS_TARGET_CYCLES = 2.0
 # 0.2095. Only used to SIZE the bar; the actual hits are per-ball flags on the book, never this number.
 IN_BONUS_SPIN_HITS_PER_BALL = 0.2095
 
+# NOMINAL entry balls — what the in-bonus bar is SIZED FROM, per bet mode.
+#
+# ⚠️ THE BAR IS FIXED PER (MODE, LEVEL) AND DOES NOT DEPEND ON THE BALLS THE PLAYER WON (2026-08-26).
+# It used to be sized from the round's ACTUAL entry, which for an earned bonus is whatever the bonus
+# roulette landed (20-100 balls) — so the same mode showed a level-1 bar of 3 on a 20-ball entry and 10
+# on a 100-ball one, and the client could not name the bar until the wheel had stopped. The buy tiers
+# never had that problem: their entry is a pinned constant (`BUY_BONUS_TIER_DEFS.entry_balls`), so their
+# bar has always been a fixed per-level table. This makes the earned bonus behave the same way.
+#
+# ⚠️ IT MUST BE PER MODE, NOT ONE GLOBAL PER-LEVEL TABLE. See the note above: a single flat bar across
+# modes was measured at 107.4 / 110.4 / 114.6 / 118.0% on the four buy tiers, an 11-point spread from one
+# constant. The tiers open on wildly different ball counts and the bar has to open with them.
+#
+# ⚠️ RTP-NEUTRAL BY CONSTRUCTION, which is what makes this affordable. Fills per batch are LINEAR in the
+# batch's balls (`balls x 0.2095 / bar`), so sizing the bar off the tier's MEAN entry leaves the mean
+# number of wheels per round where it was: E[fills] = TARGET_CYCLES x E[entry] / nominal = TARGET_CYCLES.
+# What changes is the SPREAD, deliberately — a lucky 100-ball entry on 10-ball now fires ~7 wheels where
+# it fired ~2, and a 20-ball entry still fires ~1.4. Bigger entry, visibly more wheels, same story the
+# buy ladder already tells.
+#
+# MEASURED with `rtp_audit.py` at n=60,000/mode, before -> after: 10-ball 95.708 -> 95.746%, 20-ball
+# 95.687 -> 95.659%, 50-ball 95.684 -> 95.687% (+0.038 / -0.028 / +0.003 points, against the analytic
+# prediction of +0.047 / -0.038 / -0.014). The four buy tiers are the CONTROL — they pass their own
+# pinned entry and cannot move — and they read -0.006 / +0.001 / -0.004 / +0.010, which is this tool's
+# noise floor at that n. So the base-mode deltas are at or under noise: NO lever was re-solved for this,
+# and none is needed. Cross-mode spread 0.103% -> 0.110% against Stake's 0.500% limit; every mode stays
+# within 0.064% of TARGET_RTP.
+#
+# VALUES ARE `bonus_wheel_mean_entry(balls)` ROUNDED, PINNED AS LITERALS ON PURPOSE. Deriving them live
+# would let a `BONUS_WHEEL_WEIGHTS_BY_BALLS` re-solve silently move every earned bonus's bar — the exact
+# coupling the buy tiers avoid by pinning `entry_balls`. Re-derive deliberately with
+# `bonus_wheel_mean_entry(10/20/50)` and re-run `rtp_audit.py` when the wheel weights move.
+# Absent tiers (1-ball) fall back to the drawn entry; 1-ball has no free spin, so the bar is never used.
+IN_BONUS_NOMINAL_ENTRY: dict[int, int] = {10: 23, 20: 44, 50: 76}
+
+
+def in_bonus_nominal_entry(balls_per_drop: int) -> int:
+    """Nominal entry balls the in-bonus spin bar is sized from for this tier (0 = no pinned value)."""
+    return int(IN_BONUS_NOMINAL_ENTRY.get(int(balls_per_drop), 0))
+
 
 def in_bonus_spin_meter_max(entry_balls: int) -> int:
     """Free-spin meter bar for a batch of `entry_balls` balls (see the notes above).
@@ -862,6 +902,11 @@ def in_bonus_supply(entry_balls: int, level: int) -> int:
 def in_bonus_spin_meter_max_at_level(entry_balls: int, level: int) -> int:
     """Free-spin meter bar for the batch played AT `level`, sized from the round's supply so far.
 
+    ⚠️ `entry_balls` IS THE MODE'S NOMINAL ENTRY, NOT THE BALLS THIS ROUND WON — a buy tier's pinned
+    `entry_balls` or `in_bonus_nominal_entry(balls_per_drop)`. Passing the drawn wheel result instead
+    (what `simulate_bonus_round` did until 2026-08-26) makes the bar depend on the roulette, so the same
+    mode shows a different level-1 bar every bonus. See `IN_BONUS_NOMINAL_ENTRY`.
+
     ⚠️ THIS REPLACES A ONCE-PER-ROUND BAR, and the old one did not survive the ladder. `spin_max` used
     to be `in_bonus_spin_meter_max(entry_balls)` fixed for the whole round: correct for the entry batch,
     then handed every level-up award as well. Since 2026-08-19 the meter fires on EVERY fill, so a deep
@@ -878,9 +923,10 @@ def in_bonus_spin_meter_max_at_level(entry_balls: int, level: int) -> int:
     that could SHRINK between batches would leave a carry sitting above its own max and fire the wheel on
     the first hit of the batch. `in_bonus_supply` only grows, so the carry is always ≤ the new bar.
 
-    ⚠️ LEVEL 1 IS UNCHANGED (supply == entry), which is what keeps this affordable: the level-1 batch is
-    where nearly all the bonus EV lives (91.6% of 10-ball bonuses never leave it). The RTP that moves is
-    level 2+ — see `BONUS_IN_DROP_RATE` / `BUY_BONUS_TIER_DEFS`, re-solved with `rtp_audit.py`."""
+    ⚠️ LEVEL 1 IS UNCHANGED BY THE SUPPLY SIZING (supply == entry), which is what keeps that change
+    affordable: the level-1 batch is where nearly all the bonus EV lives (91.6% of 10-ball bonuses never
+    leave it). The RTP that moves is level 2+ — see `BONUS_IN_DROP_RATE` / `BUY_BONUS_TIER_DEFS`,
+    re-solved with `rtp_audit.py`."""
     return in_bonus_spin_meter_max(in_bonus_supply(entry_balls, level))
 
 

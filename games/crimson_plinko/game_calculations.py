@@ -18,6 +18,7 @@ from plinko_data import (
     bonus_wheel_free_balls,
     bonus_wheel_weights,
     coefficients_for,
+    in_bonus_nominal_entry,
     in_bonus_spin_meter_max_at_level,
     scaled_spin_meter_max,
     spin_in_drop_for_balls,
@@ -191,14 +192,27 @@ class GameCalculations(Executables):
             )
         events.append({"type": "bonusRoulette", "freeBalls": entry_balls})
 
-        # The IN-BONUS bar is sized from THIS round's own ball supply, not from the tier's drop-side
-        # meter and not from the entry alone — see `in_bonus_spin_meter_max_at_level`. It is recomputed
-        # per batch below, so a round that climbs the ladder keeps ~`IN_BONUS_TARGET_CYCLES` fills per
-        # level instead of one wheel every few balls. The override pins it flat for `rtp_audit.py`.
+        # The IN-BONUS bar is sized from the mode's NOMINAL ball supply — not from the tier's drop-side
+        # meter, and NOT from the balls this round actually won. A buy passes its pinned `entry_balls`;
+        # an earned bonus uses `in_bonus_nominal_entry(balls_per_drop)`, the tier's mean wheel entry, so
+        # the bar is a FIXED per-(mode, level) table instead of moving with the roulette result. The
+        # level term still grows with the ladder (`in_bonus_spin_meter_max_at_level`), so a round that
+        # climbs keeps ~`IN_BONUS_TARGET_CYCLES` fills per level instead of one wheel every few balls.
+        #
+        # RTP-neutral in the mean and deliberately not in the spread: fills are linear in the batch's
+        # balls, so a lucky big entry now fires proportionally MORE wheels than a small one instead of
+        # the same ~2 either way. See `IN_BONUS_NOMINAL_ENTRY`. The override pins it flat for
+        # `rtp_audit.py`; tiers with no pinned nominal (1-ball, which has no free spin at all) fall back
+        # to the drawn entry, i.e. the pre-2026-08-26 behaviour.
+        if entry_balls_override and entry_balls_override > 0:
+            nominal_entry = int(entry_balls_override)
+        else:
+            nominal_entry = in_bonus_nominal_entry(balls_per_drop) or entry_balls
+
         def spin_max_for(level: int) -> int:
             if spin_meter_max_override > 0:
                 return max(1, int(spin_meter_max_override))
-            return in_bonus_spin_meter_max_at_level(entry_balls, level)
+            return in_bonus_spin_meter_max_at_level(nominal_entry, level)
 
         spin_max = spin_max_for(1)
 
