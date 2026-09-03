@@ -53,14 +53,24 @@ See INTEGRATION.md in this folder.
 
 PLINKO_BOOKS_COMPRESSION=1 make run GAME=crimson_plinko
 
-  ^ REQUIRED for a publish build. The sim counts in run.py are sized so each mode's LUT RTP
-  carries <=~0.10% of sampling error (Stake grades RTP off the LUT and enforces a 0.50%
-  cross-mode limit), which puts onedrop at 9.6M books -- ~6GB as an uncompressed .json, and
-  that format is one JSON array with no line structure, so the publish-sync step has to
-  json.load it whole and will OOM. The compressed books are line-delimited and stream.
-  For local dev / storybook samples keep the uncompressed default and set PLINKO_SIM_DIV.
+  ^ REQUIRED for a publish build. The feature-tier sim counts in run.py are sized so each
+  mode's LUT RTP carries <=~0.10% of sampling error (Stake grades RTP off the LUT and
+  enforces a 0.50% cross-mode limit); at those counts an uncompressed books_<mode>.json is
+  gigabytes, and that format is one JSON array with no line structure, so the publish-sync
+  step has to json.load it whole and will OOM. The compressed books are line-delimited and
+  stream. For local dev / storybook samples keep the uncompressed default and set PLINKO_SIM_DIV.
+
+  onedrop is laid out by EXACT quota instead of sampled (GameCalculations.stratified_rate_index):
+  the 1-ball tier is feature-free and its pocket is a 14-step binomial walk, so each pocket gets
+  round(N x p_k) books and the LUT RTP is the closed-form board EV at ANY count. Its count (1M)
+  is chosen for the RGS, not for precision. verify_stratified_onedrop.py checks the layout
+  in-process without touching library/; run.py re-checks the published LUT after every run.
 
 Publish limits (ACP rejects the upload outright if either is broken):
   - <= 10,000,000 results PER MODE, else ERR_MATH_OUTSIDE_RANGE "Too many simulations!".
-    onedrop is the only mode anywhere near it; keep it at 9.6M.
   - cross-mode RTP spread <= 0.50%. See rtp_audit.py and the sizing note in run.py.
+RGS serving limit (the ACP ceiling is NOT a serving guarantee):
+  - /wallet/play latency grows with a mode's LUT row count and the RGS gives up at ~15 s.
+    Measured on v63: <=1.8M rows answer in 0.3-4.4 s; the 9.6M-row onedrop took 10.6-15.4 s
+    and 2 of 3 plays returned HTTP 500 ERR_GEN (every 1-ball bet hit the fatal error modal).
+    Keep every mode at roughly <= 1-2M rows.

@@ -50,6 +50,47 @@ def _lut_mean_multiplier(lut_path: str) -> float:
     return (total / weight) / 100.0
 
 
+def verify_onedrop_stratified(gamestate: GameState, *, only_modes: set[str] | None = None) -> None:
+    """Fail the run if the 1-ball LUT is not the exact board EV.
+
+    The stratified layout (`GameCalculations.stratified_rate_index`) leaves the onedrop LUT mean within
+    ~1e-6 of the closed-form 1-ball board EV at 1M books. The check allows max_payout / N (1e-4 at 1M):
+    a randomly sampled onedrop carries ~3e-3 of noise at that count, so anything past the allowance
+    means the layout was not armed (e.g. the SDK changed how it slices a mode across threads and the
+    planned total no longer matches the books actually written) and the mode is back to a noisy sample."""
+    from math import comb
+
+    from plinko_data import ONE_BALL_BOARD_SLOT_MULTIPLIERS
+
+    mode = bet_mode_for_balls_per_drop(1)
+    if only_modes and mode not in only_modes:
+        return
+    manifest_path = gamestate.output_files.configs["paths"]["manifest"]
+    with open(manifest_path, encoding="UTF-8") as f:
+        manifest = json.load(f)
+    entry = next((m for m in manifest.get("modes", []) if m["name"] == mode), None)
+    if entry is None:
+        return
+    lut = os.path.join(gamestate.output_files.publish_path, entry["weights"])
+    rows = 0
+    with open(lut, encoding="UTF-8") as f:
+        for row in csv.reader(f):
+            rows += bool(row)
+    board = list(ONE_BALL_BOARD_SLOT_MULTIPLIERS)
+    row_count = 14
+    exact_ev = sum(comb(row_count, k) / 2**row_count * board[k] for k in range(len(board)))
+    lut_mean = _lut_mean_multiplier(lut) / float(entry["cost"])
+    tolerance = max(board) / max(rows, 1)
+    if abs(lut_mean - exact_ev) > tolerance:
+        raise RuntimeError(
+            f"{mode} LUT mean {lut_mean:.6f} is {abs(lut_mean - exact_ev):.2e} off the exact board EV "
+            f"{exact_ev:.6f} (tolerance {tolerance:.2e} for {rows} rows): the stratified 1-ball layout "
+            "did not take effect. Check GameStateOverride.run_sims against src/state/run_sims.py."
+        )
+    print(f"{mode}: {rows} books, LUT RTP {lut_mean * 100:.4f}% == exact board EV {exact_ev * 100:.4f}% "
+          f"(|diff| {abs(lut_mean - exact_ev):.2e})")
+
+
 def report_mode_rtp(gamestate: GameState) -> None:
     """Print per-mode RTP (mean payout / index.json cost) — the value the Stake math summary shows.
 
@@ -181,43 +222,50 @@ if __name__ == "__main__":
     # At the previous counts (1M/400k/240k/400k + 200k buys) the SEs were 0.32%/0.21%/0.20%/0.10% and
     # ~0.05-0.09%, which puts the RANGE across 8 independent estimates at a mean of 0.48% and gives a
     # ~40% chance of BREACHING the 0.50% cross-mode limit even with every mode's TRUE RTP identical. The
-    # counts below hold every mode at SE <= ~0.10%, which drops the mean range to 0.26% and the breach
-    # probability to ~0.4%. Cost is ~2x the old run (~13.6M sims, ~1.5-2h, ~28GB of intermediate .json)
-    # and RAM is unchanged (it scales with threads x PLINKO_BATCH x book size, not with total sims).
-    # ⚠️ Do NOT trim these back to "save time" — re-derive them from sd/sqrt(n) if the math changes.
+    # feature-tier counts below hold each of them at SE <= ~0.10%, which drops the mean range to 0.26% and
+    # the breach probability to ~0.4% (onedrop contributes NO sampling error any more — see the stratified
+    # layout note below). RAM scales with threads x PLINKO_BATCH x book size, not with total sims.
+    # ⚠️ Do NOT trim the feature tiers back to "save time" — re-derive them from sd/sqrt(n) if the math changes.
     # ⚠️ HARD PLATFORM CEILING: 10,000,000 results PER MODE. Over it the ACP publish is rejected outright
-    # with `ERR_MATH_OUTSIDE_RANGE` ("Too many simulations!"), so no mode may exceed it — onedrop was
-    # first sized at 11M and bounced on exactly that. 9.6M keeps ~4% of headroom AND divides evenly by
-    # threads x PLINKO_BATCH at 1/2/4/8 threads, so the SDK's `sims_per_thread` rounding lands on exactly
-    # 9,600,000 books rather than drifting up toward the ceiling. It is also the FLOOR on onedrop's SE:
-    # at the cap the best achievable is ~0.102%, so that tier cannot be made quieter by sim count alone.
+    # with `ERR_MATH_OUTSIDE_RANGE` ("Too many simulations!"). That ceiling is NOT a serving guarantee:
+    # the RGS's `/wallet/play` cost grows with the mode's LUT row count and it gives up at ~15 s. Measured
+    # on math v63 (2026-09-03): 1.8M rows answer in 0.3-4.4 s, 1M rows in 0.3-1.6 s, but the 9.6M-row
+    # onedrop LUT took 10.6-15.4 s and two plays in three came back HTTP 500 `ERR_GEN` — every 1-ball bet
+    # died in the client's fatal error modal. Keep EVERY mode at roughly <= 1-2M rows.
+    #
+    # onedrop no longer needs a huge count to be quiet: the 1-ball tier is feature-free, its pocket is a
+    # plain 14-step binomial walk, and `GameCalculations.stratified_rate_index` lays its books out by
+    # EXACT quota (N × p_k books per pocket, rounded so the mean payout is preserved) instead of drawing
+    # them, so the LUT mean equals the closed-form board EV to ~1e-6 at 1M — no sampling error at any N. The
+    # count is therefore chosen for the RGS alone: 1,000,000 matches twentydrop, which serves in ~1 s,
+    # and still holds ~120 copies of the 100× corner (p = 2/16384), far above the 1/20,000,000 max-win
+    # floor. `verify_onedrop_stratified` below fails the run if the LUT ever drifts off that EV.
     #
     # ⚠️ A RE-RUN IS NOT A RE-ROLL. `GeneralGameState.reset_seed` seeds `random` with `sim + 1`, so the
-    # books — and therefore each mode's LUT RTP — are a deterministic function of the sim COUNT. Running
-    # `make run` again at the same counts reproduces the same numbers exactly. So check the spread with
-    # `compliance_report.py` BEFORE uploading, and if a mode landed unluckily the lever is to change its
-    # count (e.g. onedrop 9_600_000 -> 9_500_000), which draws a different sample. Re-running unchanged
-    # will not move it.
-    # ⚠️ RUN A PUBLISH BUILD WITH PLINKO_BOOKS_COMPRESSION=1. At these counts onedrop's uncompressed
-    # `books_onedrop.json` is ~7GB, and that format is a single JSON ARRAY with no per-line structure, so
-    # `publish_verify._resolve_book_payouts` has to `json.load` it whole and will run out of memory. The
-    # compressed path is line-delimited and streams (see `_iter_books`). The uncompressed default is only
-    # for local dev, where `apps/plinko`'s `sync-math-books` wants a readable `.json` — and there you want
-    # PLINKO_SIM_DIV set anyway.
+    # books — and therefore each FEATURE mode's LUT RTP — are a deterministic function of the sim COUNT.
+    # Running `make run` again at the same counts reproduces the same numbers exactly. So check the
+    # spread with `compliance_report.py` BEFORE uploading, and if a feature mode landed unluckily the
+    # lever is to change ITS count (e.g. tendrop 1_800_000 -> 1_790_000), which draws a different sample.
+    # Re-running unchanged will not move it. (onedrop is exact at every count and needs no such nudge.)
+    # ⚠️ RUN A PUBLISH BUILD WITH PLINKO_BOOKS_COMPRESSION=1. The uncompressed `books_<mode>.json` format
+    # is a single JSON ARRAY with no per-line structure, so `publish_verify._resolve_book_payouts` has to
+    # `json.load` it whole; at publish counts the feature tiers are gigabytes and will run out of memory.
+    # The compressed path is line-delimited and streams (see `_iter_books`). The uncompressed default is
+    # only for local dev, where `apps/plinko`'s `sync-math-books` wants a readable `.json` — and there
+    # you want PLINKO_SIM_DIV set anyway.
     sims_div = max(1, int(os.getenv("PLINKO_SIM_DIV", "1")))  # set >1 for a fast smoke test
     # FOLDED-BONUS DESIGN: only 4 base modes. Each mode mixes a normal-drop stratum (quota 1-rate) and a
     # rare force_bonus stratum (quota = BONUS_IN_DROP_RATE). The folded bonus is RARE + HIGH-VARIANCE
     # (level-ups, big ball dumps), so the feature tiers need heavy sims to converge the bonus add. onedrop
-    # is the exception: it has NO bonus stratum at all, and needs the most sims purely because a one-ball
-    # book is the noisiest thing here (see the SE table above).
+    # is the exception: it has NO bonus stratum at all, and its books are laid out by exact quota (see
+    # above), so its count only has to keep the RGS fast.
     # fiftydrop: was 1.5M ONLY to surface the rare 400× max-win spike (~1/165k on the old FLAT-bar bonus).
     # The ESCALATING level-up made bonuses bigger + frequent, so tier-50 now hits the 400× cap ~1/4,900
     # (≈33× more often) — the spike appears in ~120 books at 400k. Cut 1.5M → 400k: still converges RTP +
     # the achievable max-win, and (with 50 balls/drop) it is BY FAR the heaviest mode for RAM, so this is
     # the single biggest `make run` memory saving. Bump back up only if the observed fiftydrop max < 400×.
-    # 1/10/20 are sized by the SE arithmetic above (sd/sqrt(n) <= ~0.10%); 50 already met it at 400k.
-    # onedrop wants 10.5M for a flat 0.10% but is held at 9.6M by the 10M-per-mode publish ceiling.
-    base_sims = {1: 9_600_000, 10: 1_800_000, 20: 1_000_000, 50: 400_000}
+    # 10/20 are sized by the SE arithmetic above (sd/sqrt(n) <= ~0.10%); 50 already met it at 400k.
+    base_sims = {1: 1_000_000, 10: 1_800_000, 20: 1_000_000, 50: 400_000}
     num_sim_args = {
         bet_mode_for_balls_per_drop(balls): max(1000, base_sims[balls] // sims_div)
         for balls in BALLS_PER_DROP_OPTIONS
@@ -255,6 +303,7 @@ if __name__ == "__main__":
     generate_configs(gamestate)
     write_plinko_fe_config(gamestate)
     report_mode_rtp(gamestate)
+    verify_onedrop_stratified(gamestate, only_modes=only_modes or None)
     print(f"Done. Books: {gamestate.output_files.book_path}")
     print(f"Publish: {gamestate.output_files.publish_path}")
     print(f"FE config: {gamestate.output_files.config_path}")

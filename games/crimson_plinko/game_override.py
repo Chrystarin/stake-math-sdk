@@ -1,7 +1,49 @@
 from game_executables import GameExecutables
+from plinko_data import bet_mode_for_balls_per_drop
 
 
 class GameStateOverride(GameExecutables):
+    def run_sims(
+        self,
+        betmode_copy_list,
+        betmode,
+        sim_to_criteria,
+        total_threads,
+        total_repeats,
+        num_sims,
+        thread_index,
+        repeat_count,
+        compress=True,
+        write_event_list=True,
+        simulation_seeds=[],
+    ) -> None:
+        """Arm the stratified 1-ball layout for this worker before the SDK loop runs its sims.
+
+        `num_sims` here is PER THREAD PER REPEAT; the SDK splits a mode's requested count into
+        `total_threads x total_repeats` equal slices and numbers the books 0..total-1 across all of
+        them, so the whole library is `total_threads x total_repeats x num_sims` books (the same
+        arithmetic run_sims.py uses, which is why e.g. a 1,000,000 request lands on 999,984). The
+        stratified plan needs that exact total, and it is only known here - pass it down."""
+        self.stratified_onedrop_total = (
+            int(total_threads) * int(total_repeats) * int(num_sims)
+            if betmode == bet_mode_for_balls_per_drop(1)
+            else None
+        )
+        self._stratified_plan_cache = None
+        super().run_sims(
+            betmode_copy_list,
+            betmode,
+            sim_to_criteria,
+            total_threads,
+            total_repeats,
+            num_sims,
+            thread_index,
+            repeat_count,
+            compress,
+            write_event_list,
+            simulation_seeds,
+        )
+
     def reset_book(self):
         super().reset_book()
         self.row_count = 14

@@ -5,6 +5,8 @@ the client animates exactly these outcomes and never rolls its own dice.
 """
 
 import random as py_random
+from bisect import bisect_right
+from math import comb, gcd
 
 from plinko_data import (
     BONUS_METER_MAX,
@@ -34,12 +36,116 @@ class GameCalculations(Executables):
     FREE_SPIN_SEGMENTS: list[str] = list(FREE_SPIN_SEGMENTS)
     FREE_SPIN_WEIGHTS: list[float] = list(FREE_SPIN_WEIGHTS)
 
+    # STRATIFIED 1-BALL SAMPLING. Set by `GameStateOverride.run_sims` to the mode's TOTAL book count
+    # while the feature-free 1-ball mode is being simulated, None for every other mode. See
+    # `stratified_rate_index`.
+    stratified_onedrop_total: int | None = None
+    _stratified_plan_cache: dict | None = None
+
+    @staticmethod
+    def rights_to_rate_index(rights: int, row_count: int, num_slots: int) -> int:
+        """The Galton-board mapping from `rights` right-deflections (of `row_count`) to a pocket index.
+        ONE definition, shared by the random sampler and the stratified plan, so the two can never
+        disagree about which pocket a deflection count lands in."""
+        if num_slots <= 1:
+            return 0
+        return min(num_slots - 1, round(rights * (num_slots - 1) / row_count))
+
+    @classmethod
+    def pocket_probabilities(cls, row_count: int, num_slots: int) -> list[float]:
+        """EXACT landing probability of every pocket: the deflection count is Binomial(row_count, 1/2),
+        pushed through `rights_to_rate_index`. This is the distribution `sample_rate_index` draws from."""
+        probs = [0.0] * max(1, num_slots)
+        for rights in range(row_count + 1):
+            probs[cls.rights_to_rate_index(rights, row_count, num_slots)] += comb(row_count, rights) / 2**row_count
+        return probs
+
+    @staticmethod
+    def stratified_pocket_counts(probs: list[float], total: int, payouts: list[float] | None = None) -> list[int]:
+        """How many of `total` books land in each pocket: `total x p_k`, each pocket floored or ceiled
+        (within one book of its exact expectation) with the counts summing to `total` exactly.
+
+        WHICH pockets get the extra book is chosen to make the library's MEAN PAYOUT match the exact
+        EV, not merely each count: with 15 pockets rounded independently (plain largest remainder) the
+        mean can drift by up to sum(payouts)/total, and on this board the 100x corners dominate that. So
+        among the C(15, leftover) ways to hand out the leftover books, take the one whose signed payout
+        error |sum_k (count_k - total x p_k) x payout_k| is smallest (ties -> the largest remainders). At
+        most 6435 subsets, evaluated once per run. Without `payouts` it is plain largest remainder."""
+        raw = [p * total for p in probs]
+        floors = [int(x) for x in raw]
+        leftover = total - sum(floors)
+        remainders = [raw[k] - floors[k] for k in range(len(probs))]
+        if payouts is None:
+            chosen = tuple(sorted(range(len(probs)), key=lambda k: remainders[k], reverse=True)[:leftover])
+        else:
+            from itertools import combinations
+
+            base_err = sum((floors[k] - raw[k]) * payouts[k] for k in range(len(probs)))
+            best_key = None
+            chosen = ()
+            for subset in combinations(range(len(probs)), leftover):
+                err = base_err + sum(payouts[k] for k in subset)
+                key = (abs(err), -sum(remainders[k] for k in subset))
+                if best_key is None or key < best_key:
+                    best_key, chosen = key, subset
+        counts = list(floors)
+        for k in chosen:
+            counts[k] += 1
+        return counts
+
+    def _stratified_plan(self, row_count: int, num_slots: int, total: int, payouts: list[float]) -> dict:
+        cache = self._stratified_plan_cache
+        key = (row_count, num_slots, total, tuple(payouts))
+        if cache and cache.get("key") == key:
+            return cache
+        counts = self.stratified_pocket_counts(
+            self.pocket_probabilities(row_count, num_slots), total, list(payouts)
+        )
+        bounds = []
+        running = 0
+        for c in counts:
+            running += c
+            bounds.append(running)
+        # Spread the pockets over the id range with a multiplicative scramble: rank = id x step mod total
+        # is a bijection on 0..total-1 whenever gcd(step, total) = 1, so a run of consecutive ids visits
+        # pockets in a mixed order instead of the LUT reading "all the 100x books first". Deterministic in
+        # (row_count, num_slots, total) alone - no RNG, no per-thread state.
+        step = max(1, int(total * 0.6180339887498949))
+        while gcd(step, total) != 1:
+            step -= 1
+        self._stratified_plan_cache = {"key": key, "counts": counts, "bounds": bounds, "step": step}
+        return self._stratified_plan_cache
+
+    def stratified_rate_index(
+        self, sim: int, row_count: int, num_slots: int, total: int, payouts: list[float]
+    ) -> int:
+        """Pocket for book `sim` of a `total`-book run, laid out so the finished library holds
+        `total x p_k` books (to the book) in pocket k, rounded so the mean payout is the exact board EV
+        (see `stratified_pocket_counts`; `payouts` is the board the drop pays from).
+
+        Why: the 1-ball tier is feature-free, so its RTP is nothing but the board EV - and with random
+        sampling the published LUT only ESTIMATES that EV, with sd ~ 3.27/sqrt(N) (a lone 100x corner
+        moves a one-ball mean a long way). Hitting Stake's 0.50% cross-mode RTP limit that way needed
+        9.6M books, and a 9.6M-row LUT is more than the RGS can serve inside its ~15 s play timeout
+        (`ERR_GEN` on every 1-ball bet - see readme.txt). Laying the books out by exact quota instead
+        pins the LUT mean to the board EV (payout-aware rounding leaves ~1e-6 of RTP at 1M books, and
+        even the crude bound sum(payouts)/total is 0.04%) at ANY book count, so the count can be
+        whatever the RGS serves comfortably.
+
+        The board is the same one `sample_rate_index` plays - only WHICH pocket each id gets is planned
+        rather than drawn. `hitBonusPeg` is still sampled per ball (it is EV-neutral on this tier)."""
+        plan = self._stratified_plan(row_count, num_slots, total, payouts)
+        if not 0 <= sim < total:
+            raise ValueError(f"stratified onedrop: sim {sim} outside the planned 0..{total - 1} range")
+        rank = (sim * plan["step"]) % total
+        return bisect_right(plan["bounds"], rank)
+
     def sample_rate_index(self, row_count: int, num_slots: int) -> int:
         """Map `row_count` binary peg deflections to a slot index."""
         if num_slots <= 1:
             return 0
         rights = sum(py_random.randint(0, 1) for _ in range(row_count))
-        return min(num_slots - 1, round(rights * (num_slots - 1) / row_count))
+        return self.rights_to_rate_index(rights, row_count, num_slots)
 
     def is_spin_slot(self, rate_index: int, num_slots: int) -> bool:
         return rate_index == spin_slot_index(num_slots)
@@ -72,8 +178,16 @@ class GameCalculations(Executables):
         num_slots = len(coeffs)
         spin_pocket = spin_pocket_active_for_balls(tier)
         peg_prob = max(0.0, min(1.0, float(peg_hit_prob)))
+        # The feature-free 1-ball tier lays its single ball out by exact quota (see
+        # `stratified_rate_index`); every other drop, and any bonus batch, samples the board randomly.
+        stratified_total = self.stratified_onedrop_total if (tier == 1 and balls_per_drop == 1) else None
         for _ in range(balls_per_drop):
-            rate_index = self.sample_rate_index(row_count, num_slots)
+            if stratified_total:
+                rate_index = self.stratified_rate_index(
+                    self.sim, row_count, num_slots, stratified_total, coeffs
+                )
+            else:
+                rate_index = self.sample_rate_index(row_count, num_slots)
             # `hitSpinSlot` means "this ball fed the free-spin meter" — only on tiers that HAVE one. The
             # payout always comes from the board and is unaffected by the flag: every board pays 0 at the
             # centre, so a 1-ball centre land is worth the same 0 as elsewhere; it just isn't REPORTED as
