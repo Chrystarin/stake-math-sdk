@@ -3,7 +3,7 @@
 Money-wheel game show, single-player RNG, modelled on Evolution's Crazy Time:
 
   * a 54-segment wheel with 8 bet spots — four numbers (x1 x2 x5 x10) and four bonus rooms
-    (plinko, multiplier wheel, treasure chest, dragon tower);
+    (plinko, jackpot wheel, treasure chest, dragon tower);
   * a Top Slot that, before every spin, may attach a multiplier to ONE spot;
   * ten bet modes: the eight single spots, `bonuses` (all four rooms, cost 4) and
     `full_board` (all eight spots, cost 8). The player's chip is `amount`; the RGS charges
@@ -49,22 +49,32 @@ SPOTS: Tuple[str, ...] = NUMBER_SPOTS + ROOM_SPOTS
 NUMBER_PAY: Dict[str, int] = {"x1": 1, "x2": 2, "x5": 5, "x10": 10}
 
 # Physical order around the rim, clockwise from the flapper. 54 entries.
-# Counts: x1 19, x2 12, x5 6, x10 4, plinko 4, wheel 3, chest 3, tower 3.
-# Rules: rooms never adjacent, plinko on the quarter points, x10 never next to x10.
+# Counts: x1 21, x2 13, x5 7, x10 4, chest 4, plinko 2, tower 2, wheel 1 — Crazy Time's own
+# split (21/13/7/4 numbers; Coin Flip 4, Pachinko 2, Cash Hunt 2, Crazy Time 1), so the rooms
+# rank chest < plinko = tower < wheel in rarity and the jackpot wheel is the one-off.
+# Rules: one room every six segments (exactly five numbers between any two rooms, so the nine
+# rooms are spread evenly: chests every 12, plinko and tower each an opposite pair, the jackpot
+# wheel on its own), x10 never next to x10.
 SEGMENT_LAYOUT: Tuple[str, ...] = (
-    "plinko", "x1", "x2", "x1", "wheel", "x1", "x5", "x1", "x2", "chest", "x1", "x10", "x2",
-    "plinko", "x1", "x2", "x1", "x5", "tower", "x1", "x2", "x1", "wheel", "x1", "x10", "x2", "x1",
-    "plinko", "x2", "x1", "x5", "chest", "x1", "x2", "x1", "tower", "x1", "x5", "x2", "x1",
-    "plinko", "x1", "x10", "x2", "x5", "wheel", "x1", "x5", "x2", "chest", "x1", "x10", "tower", "x2",
+    "chest", "x1", "x2", "x1", "x5", "x2",
+    "plinko", "x1", "x10", "x1", "x2", "x1",
+    "chest", "x2", "x1", "x5", "x1", "x2",
+    "tower", "x1", "x2", "x1", "x5", "x1",
+    "chest", "x1", "x10", "x2", "x1", "x2",
+    "plinko", "x1", "x5", "x1", "x2", "x1",
+    "chest", "x2", "x1", "x10", "x1", "x5",
+    "tower", "x1", "x2", "x1", "x5", "x2",
+    "wheel", "x1", "x10", "x2", "x1", "x5",
 )
 NUM_SEGMENTS = len(SEGMENT_LAYOUT)
 SEGMENT_COUNT: Dict[str, int] = {spot: SEGMENT_LAYOUT.count(spot) for spot in SPOTS}
 
 assert NUM_SEGMENTS == 54, NUM_SEGMENTS
-assert SEGMENT_COUNT == {"x1": 19, "x2": 12, "x5": 6, "x10": 4, "plinko": 4, "wheel": 3, "chest": 3, "tower": 3}, SEGMENT_COUNT
+assert SEGMENT_COUNT == {"x1": 21, "x2": 13, "x5": 7, "x10": 4, "plinko": 2, "wheel": 1, "chest": 4, "tower": 2}, SEGMENT_COUNT
 for _i, _spot in enumerate(SEGMENT_LAYOUT):
     _next = SEGMENT_LAYOUT[(_i + 1) % NUM_SEGMENTS]
-    assert not (_spot in ROOM_SPOTS and _next in ROOM_SPOTS), f"rooms adjacent at {_i}"
+    assert (_spot in ROOM_SPOTS) == (_i % 6 == 0), f"room spacing broken at {_i}"
+    assert not (_spot == "x10" and _next == "x10"), f"x10 adjacent at {_i}"
 
 # ---------------------------------------------------------------------------
 # Top Slot
@@ -80,17 +90,18 @@ TOP_SLOT_TOTAL = 1_000_000
 # ---------------------------------------------------------------------------
 # Bonus rooms: (gross multiplier on the chip, weight)
 # ---------------------------------------------------------------------------
-# Plinko: 13 landing slots, symmetric, binomial(12) landing weights. Min 4x, top 400x.
-PLINKO_SLOTS: Tuple[int, ...] = (400, 80, 40, 20, 12, 7, 4, 7, 12, 20, 40, 80, 400)
+# Plinko: 13 landing slots, symmetric, binomial(12) landing weights. Min 7x, top 400x.
+PLINKO_SLOTS: Tuple[int, ...] = (400, 100, 50, 30, 20, 12, 7, 12, 20, 30, 50, 100, 400)
 PLINKO_TABLE: Tuple[Tuple[int, int], ...] = tuple((v, comb(12, i)) for i, v in enumerate(PLINKO_SLOTS))
 
-# Multiplier wheel: 36 wedges. Weight == number of wedges carrying that value.
-WHEEL_TABLE: Tuple[Tuple[int, int], ...] = ((2, 13), (3, 9), (5, 6), (10, 3), (20, 2), (50, 1), (100, 1), (200, 1))
+# Jackpot wheel: 36 wedges. Weight == number of wedges carrying that value. The one-off
+# segment of the main wheel, so it carries the richest table (min 10x, one 500x jackpot wedge).
+WHEEL_TABLE: Tuple[Tuple[int, int], ...] = ((10, 10), (15, 8), (20, 6), (25, 5), (50, 3), (100, 2), (150, 1), (500, 1))
 WHEEL_WEDGES = sum(w for _, w in WHEEL_TABLE)  # 36
 # Wedge order around the bonus wheel (index -> value), spreading the big values apart.
 WHEEL_LAYOUT: Tuple[int, ...] = (
-    2, 3, 2, 5, 2, 10, 3, 2, 5, 2, 3, 100, 2, 3, 5, 2, 20, 3, 2, 5, 2, 3, 50, 2,
-    3, 5, 2, 10, 3, 2, 200, 2, 5, 3, 20, 10,
+    10, 15, 20, 10, 25, 10, 50, 15, 25, 20, 100, 10, 15, 25, 10, 20, 150, 15, 10, 50, 20, 10, 25, 15,
+    100, 10, 20, 50, 15, 10, 500, 25, 15, 20, 10, 15,
 )
 assert len(WHEEL_LAYOUT) == WHEEL_WEDGES
 for _v, _w in WHEEL_TABLE:
@@ -98,14 +109,14 @@ for _v, _w in WHEEL_TABLE:
 
 # Treasure chest: the player opens one of 12 chests; the awarded value comes from this table.
 CHEST_TABLE: Tuple[Tuple[int, int], ...] = (
-    (2, 20), (3, 18), (5, 16), (8, 12), (10, 10), (15, 8), (20, 6), (25, 4), (50, 3), (100, 2), (250, 1),
+    (2, 24), (3, 22), (5, 18), (8, 12), (10, 9), (15, 6), (20, 4), (25, 2), (50, 2), (100, 1), (250, 1),
 )
 NUM_CHESTS = 12
 
 # Dragon tower: 10 floors, 4 tiles per floor. The climb ends on floor k (1..10); floor k
 # pays TOWER_FLOORS[k-1]. Reaching the top pays 250x.
 TOWER_FLOORS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 35, 60, 120, 250)
-TOWER_FLOOR_WEIGHTS: Tuple[int, ...] = (24, 20, 16, 12, 9, 7, 5, 3, 2, 1)
+TOWER_FLOOR_WEIGHTS: Tuple[int, ...] = (22, 19, 16, 13, 10, 8, 6, 4, 2, 2)
 TOWER_TABLE: Tuple[Tuple[int, int], ...] = tuple(zip(TOWER_FLOORS, TOWER_FLOOR_WEIGHTS))
 TOWER_TILES_PER_FLOOR = 4
 
