@@ -14,6 +14,7 @@ from src.write_data.write_configs import generate_configs
 
 from crazy_time_data import (
     BOOKS_PER_MODE,
+    COMPLIANCE,
     MODE_NAMES,
     decode_outcome,
     outcome_weight,
@@ -61,6 +62,14 @@ if __name__ == "__main__":
     num_sim_args = {mode: BOOKS_PER_MODE for mode in MODE_NAMES}
 
     run_conditions = {"run_sims": True}
+
+    # Importing crazy_time_data already asserted Stake's rules for every mode (RTP band and
+    # spread, 1-in-20 hit rate, 1-in-20M max-win frequency); say so before the long run.
+    worst = min(COMPLIANCE.items(), key=lambda kv: kv[1]["p_max_win"])
+    print(
+        f"[crazy_time] {len(MODE_NAMES)} modes x {BOOKS_PER_MODE} books; every mode at "
+        f"{float(worst[1]['rtp']):.4f}; rarest max win {worst[0]} at 1 in {float(1 / worst[1]['p_max_win']):,.0f}"
+    )
 
     config = GameConfig()
     gamestate = GameState(config)

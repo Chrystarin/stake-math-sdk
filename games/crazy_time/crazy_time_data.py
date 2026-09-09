@@ -5,9 +5,10 @@ Money-wheel game show, single-player RNG, modelled on Evolution's Crazy Time:
   * a 54-segment wheel with 8 bet spots — four numbers (x1 x2 x5 x10) and four bonus rooms
     (plinko, jackpot wheel, treasure chest, dragon tower);
   * a Top Slot that, before every spin, may attach a multiplier to ONE spot;
-  * ten bet modes: the eight single spots, `bonuses` (all four rooms, cost 4) and
-    `full_board` (all eight spots, cost 8). The player's chip is `amount`; the RGS charges
-    `cost x amount` (same shape as colour_dice / crimson_plinko).
+  * one bet mode per COMBINATION of spots: every non-empty subset of the eight that clears
+    Stake's hit-rate floor (252 of the 255), so the player can chip any spots they like at
+    one chip each. The player's chip is `amount`; the RGS charges `cost x amount`, cost being
+    the number of spots covered (same shape as colour_dice / crimson_plinko).
 
 OUTCOME MODEL
 -------------
@@ -28,11 +29,21 @@ and for a room with mean multiplier R it is
     P(hit) * R * (1 + q * (E[m] - 1))                (Top Slot multiplies the room result)
 
 Solving each for q gives the Top Slot table; the leftover mass is the "miss" reel position.
-Because every spot returns TARGET_RTP, every bundle does too (linearity), so all ten modes
-certify at one number.
+Because every spot returns TARGET_RTP, every combination does too (linearity), so all 252
+modes certify at one number with zero cross-mode spread.
+
+STAKE COMPLIANCE (checked at import, see `compliance()`)
+--------------------------------------------------------
+  * RTP inside the published band and identical across modes;
+  * non-zero hit rate >= 1 in 20 per mode: a combination must cover at least 3 of the 54
+    segments, which excludes the three one-room bets on plinko (2), tower (2) and wheel (1);
+  * the advertised max win of every mode reached at >= 1 in 20,000,000. The binding case is
+    the Plinko 400x slot under a 50x Top Slot, which is why the Plinko landing weights carry a
+    flat floor on top of the binomial (see PLINKO_TABLE).
 """
 
 from fractions import Fraction
+from itertools import combinations
 from math import comb, lcm
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -90,9 +101,17 @@ TOP_SLOT_TOTAL = 1_000_000
 # ---------------------------------------------------------------------------
 # Bonus rooms: (gross multiplier on the chip, weight)
 # ---------------------------------------------------------------------------
-# Plinko: 13 landing slots, symmetric, binomial(12) landing weights. Min 7x, top 400x.
+# Plinko: 13 landing slots, symmetric. Min 7x, top 400x. Landing weights are binomial(12) plus a
+# flat floor of PLINKO_WEIGHT_FLOOR per slot: a pure binomial puts the 400x edges at 2 in 4096,
+# which under a 50x Top Slot is a 20,000x that lands about once in 91 million, below Stake's
+# 1-in-20,000,000 achievability floor for an advertised max win. The floor lifts the edges to
+# 18 in 4200 (about 1 in 14.6 million with the Top Slot) at the cost of a slightly richer mean,
+# which the pairing solver absorbs.
 PLINKO_SLOTS: Tuple[int, ...] = (400, 100, 50, 30, 20, 12, 7, 12, 20, 30, 50, 100, 400)
-PLINKO_TABLE: Tuple[Tuple[int, int], ...] = tuple((v, comb(12, i)) for i, v in enumerate(PLINKO_SLOTS))
+PLINKO_WEIGHT_FLOOR = 8
+PLINKO_TABLE: Tuple[Tuple[int, int], ...] = tuple(
+    (v, comb(12, i) + PLINKO_WEIGHT_FLOOR) for i, v in enumerate(PLINKO_SLOTS)
+)
 
 # Jackpot wheel: 36 wedges. Weight == number of wedges carrying that value. The one-off
 # segment of the main wheel, so it carries the richest table (min 10x, one 500x jackpot wedge).
@@ -174,18 +193,54 @@ TOP_SLOT_TABLE = tuple(_entries)
 TOP_SLOT_MISS_INDEX = len(TOP_SLOT_TABLE) - 1
 
 # ---------------------------------------------------------------------------
-# Modes
+# Modes: one per combination of spots
 # ---------------------------------------------------------------------------
-MODE_COVERAGE: Dict[str, Tuple[str, ...]] = {
-    **{spot: (spot,) for spot in SPOTS},
-    "bonuses": ROOM_SPOTS,
-    "full_board": SPOTS,
+# Short code per spot; a mode name is the covered spots' codes joined in SPOTS order, e.g.
+# "x1" (one spot), "pk_jw_tc_dt" (all four rooms), "x1_x2_x5_x10_pk_jw_tc_dt" (full board).
+# The web client derives the same name from the board, so the two must never diverge.
+SPOT_CODE: Dict[str, str] = {
+    "x1": "x1", "x2": "x2", "x5": "x5", "x10": "x10",
+    "plinko": "pk", "wheel": "jw", "chest": "tc", "tower": "dt",
 }
+
+# Stake wants a base mode to pay at least once in MIN_HIT_RATE spins...
+MIN_HIT_RATE = 20
+# ...and its advertised max win to land at least once in MAX_WIN_FLOOR spins.
+MAX_WIN_FLOOR = 20_000_000
+
+
+def mode_name(spots: Sequence[str]) -> str:
+    ordered = [spot for spot in SPOTS if spot in spots]
+    return "_".join(SPOT_CODE[spot] for spot in ordered)
+
+
+def _clears_hit_rate(spots: Sequence[str]) -> bool:
+    return sum(SEGMENT_COUNT[s] for s in spots) * MIN_HIT_RATE >= NUM_SEGMENTS
+
+
+def _all_combinations() -> Dict[str, Tuple[str, ...]]:
+    modes: Dict[str, Tuple[str, ...]] = {}
+    for k in range(1, len(SPOTS) + 1):
+        for spots in combinations(SPOTS, k):
+            if _clears_hit_rate(spots):
+                modes[mode_name(spots)] = spots
+    return modes
+
+
+MODE_COVERAGE: Dict[str, Tuple[str, ...]] = _all_combinations()
 MODE_NAMES: Tuple[str, ...] = tuple(MODE_COVERAGE)
+# Spots whose one-spot bet fails the hit-rate floor and is therefore NOT published alone.
+UNPUBLISHED_ALONE: Tuple[str, ...] = tuple(s for s in SPOTS if not _clears_hit_rate((s,)))
+assert len(MODE_COVERAGE) == 2 ** len(SPOTS) - 1 - len(UNPUBLISHED_ALONE), len(MODE_COVERAGE)
 
 
 def mode_cost(mode: str) -> int:
     return len(MODE_COVERAGE[mode])
+
+
+def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
+    name = mode_name(spots)
+    return name if name in MODE_COVERAGE else None
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +328,55 @@ def mode_rtp(mode: str) -> Fraction:
 
 
 def spot_return(spot: str) -> Fraction:
-    return mode_rtp(spot)
+    """Return of one chip on `spot`, computed directly (every mode is a mean of these)."""
+    total = Fraction(0)
+    for o, w in zip(OUTCOMES, OUTCOME_WEIGHTS):
+        d = outcome_details(o)
+        if d["spot"] == spot:
+            total += Fraction(spot_gross_return(spot, d["appliedMultiplier"], d["roomValue"])) * w
+    return total / TOTAL_WEIGHT
+
+
+def spot_max_win(spot: str) -> Tuple[int, Fraction]:
+    """(max gross return of one chip on `spot`, its probability per spin)."""
+    n = SEGMENT_COUNT[spot]
+    q50 = next(w for sp, m, w in TOP_SLOT_TABLE if sp == spot and m == TOP_SLOT_MAX)
+    if spot in NUMBER_PAY:
+        return 1 + NUMBER_PAY[spot] * TOP_SLOT_MAX, Fraction(n, NUM_SEGMENTS) * Fraction(q50, TOP_SLOT_TOTAL)
+    tbl = ROOM_TABLES[spot]
+    top = max(v for v, _ in tbl)
+    top_w = sum(w for v, w in tbl if v == top)
+    p = Fraction(n, NUM_SEGMENTS) * Fraction(q50, TOP_SLOT_TOTAL) * Fraction(top_w, ROOM_TOTAL_WEIGHT[spot])
+    return top * TOP_SLOT_MAX, p
+
+
+def compliance() -> Dict[str, dict]:
+    """Per-mode RTP, hit rate and max-win frequency, asserting Stake's rules for every mode.
+
+    Uses the per-spot figures (a mode's return is the mean of its spots' returns; its hit rate
+    the sum of their segment shares; its max win the largest of their caps), so it is cheap
+    enough to run at import.
+    """
+    returns = {s: spot_return(s) for s in SPOTS}
+    caps = {s: spot_max_win(s) for s in SPOTS}
+    report: Dict[str, dict] = {}
+    rtps = set()
+    for mode, spots in MODE_COVERAGE.items():
+        rtp = sum(returns[s] for s in spots) / len(spots)
+        hit = Fraction(sum(SEGMENT_COUNT[s] for s in spots), NUM_SEGMENTS)
+        top = max(caps[s][0] for s in spots)
+        p_top = sum(caps[s][1] for s in spots if caps[s][0] == top)
+        assert Fraction(90, 100) <= rtp <= Fraction(967, 1000), (mode, float(rtp))
+        assert abs(rtp - TARGET_RTP) < Fraction(1, 10_000), (mode, float(rtp))
+        assert hit * MIN_HIT_RATE >= 1, (mode, float(hit))
+        assert p_top * MAX_WIN_FLOOR >= 1, (mode, top, float(1 / p_top))
+        rtps.add(round(float(rtp), 5))
+        report[mode] = {"rtp": rtp, "hit_rate": hit, "max_win": top, "p_max_win": p_top}
+    assert max(rtps) - min(rtps) <= 0.005, rtps
+    return report
+
+
+COMPLIANCE = compliance()
 
 
 # ---------------------------------------------------------------------------
@@ -329,5 +432,9 @@ if __name__ == "__main__":
     print(f"Top Slot E[m | aligned] = {float(TOP_SLOT_MEAN):.4f}, miss share = {_miss / TOP_SLOT_TOTAL:.4f}")
     for spot in SPOTS:
         print(f"  {spot:7s} segs {SEGMENT_COUNT[spot]:2d}  q={float(TOP_SLOT_PAIRING[spot]):.4f}  return={float(spot_return(spot)):.6f}")
-    for mode in MODE_NAMES:
-        print(f"mode {mode:10s} cost {mode_cost(mode)}  rtp {float(mode_rtp(mode)):.6f}  max_win {max_win_for_mode(mode):.0f}x")
+    print(f"modes: {len(MODE_NAMES)} (not published alone: {UNPUBLISHED_ALONE})")
+    worst = min(COMPLIANCE.items(), key=lambda kv: kv[1]["p_max_win"])
+    print(f"rarest max win: {worst[0]} {worst[1]['max_win']}x at 1 in {float(1 / worst[1]['p_max_win']):,.0f}")
+    for mode in ("x1", "pk_dt", "pk_jw_tc_dt", "x1_x2_x5_x10_pk_jw_tc_dt"):
+        c = COMPLIANCE[mode]
+        print(f"mode {mode:26s} cost {mode_cost(mode)}  rtp {float(c['rtp']):.6f}  hit 1 in {float(1 / c['hit_rate']):.1f}  max_win {c['max_win']}x")
