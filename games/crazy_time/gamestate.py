@@ -4,19 +4,19 @@ from game_override import GameStateOverride
 from src.events.events import set_total_event
 
 from crazy_time_data import (
-    MODE_COVERAGE,
+    coverage,
     NUM_CHESTS,
     NUMBER_PAY,
     PLINKO_SLOTS,
-    TOWER_FLOORS,
-    TOWER_TILES_PER_FLOOR,
+    TILES_PER_DEPTH,
+    VOYAGE_DEPTHS,
     WHEEL_LAYOUT,
     chest_layout,
     decode_outcome,
     outcome_details,
     payout_multiplier,
     plinko_drop_zone,
-    tower_path,
+    dive_path,
     wheel_wedge_for_value,
 )
 
@@ -56,8 +56,8 @@ class GameState(GameStateOverride):
         the lookup-table weight column (run.py), not in repetition.
         """
         mode = self.betmode
-        covered = MODE_COVERAGE[mode]
-        outcome = decode_outcome(sim)
+        covered = coverage(mode)
+        outcome = decode_outcome(sim, mode)
         d = outcome_details(outcome)
         spot = d["spot"]
         is_covered = spot in covered
@@ -115,17 +115,17 @@ class GameState(GameStateOverride):
     def room_event(self, sim: int, room: str, room_index: int, value: int, top_slot: int) -> dict:
         """Presentation payload for the bonus room. Everything here is authored by the math."""
         common = {"multiplier": value, "topSlotMultiplier": top_slot, "total": value * top_slot}
-        if room == "plinko":
+        if room == "piratePlinko":
             return {
-                "type": "plinkoBonus",
+                "type": "piratePlinkoRoom",
                 "board": [v * top_slot for v in PLINKO_SLOTS],
                 "dropZone": plinko_drop_zone(sim),
                 "slot": room_index,
                 **common,
             }
-        if room == "wheel":
+        if room == "bonusWheel":
             return {
-                "type": "wheelBonus",
+                "type": "bonusWheelRoom",
                 "wedges": [v * top_slot for v in WHEEL_LAYOUT],
                 "wedge": wheel_wedge_for_value(sim, value),
                 **common,
@@ -133,22 +133,22 @@ class GameState(GameStateOverride):
         if room == "chest":
             opened, values = chest_layout(sim, value)
             return {
-                "type": "chestBonus",
+                "type": "chestRoom",
                 "chests": [v * top_slot for v in values],
                 "opened": opened,
                 "chestCount": NUM_CHESTS,
                 **common,
             }
-        if room == "tower":
-            floors_climbed = room_index + 1
-            path, fail = tower_path(sim, floors_climbed)
+        if room == "oceanVoyage":
+            depths_dived = room_index + 1
+            path, fail = dive_path(sim, depths_dived)
             return {
-                "type": "towerBonus",
-                "floors": [v * top_slot for v in TOWER_FLOORS],
-                "tilesPerFloor": TOWER_TILES_PER_FLOOR,
-                "climbed": floors_climbed,
+                "type": "oceanVoyageRoom",
+                "depths": [v * top_slot for v in VOYAGE_DEPTHS],
+                "tilesPerDepth": TILES_PER_DEPTH,
+                "dived": depths_dived,
                 "path": path,
-                "dragonTile": fail,
+                "krakenTile": fail,
                 **common,
             }
         raise KeyError(room)

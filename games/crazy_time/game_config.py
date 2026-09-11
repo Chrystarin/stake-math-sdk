@@ -17,6 +17,7 @@ from src.config.distributions import Distribution
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from crazy_time_data import (  # noqa: E402
+    BUY_MODE_NAMES,
     MODE_NAMES,
     TARGET_RTP,
     TOP_SLOT_MAX,
@@ -76,4 +77,28 @@ class GameConfig(Config):
                 ],
             )
             for mode in MODE_NAMES
+        ] + [
+            # Buy-bonus modes: straight into a room at the room's natural Top Slot odds. Not
+            # base modes (no hit-rate floor); one-shot, so not sticky.
+            BetMode(
+                name=mode,
+                cost=float(mode_cost(mode)),
+                rtp=self.rtp,
+                max_win=max_win_for_mode(mode),
+                auto_close_disabled=False,
+                is_feature=False,
+                is_buybonus=True,
+                distributions=[
+                    Distribution(
+                        criteria="basegame",
+                        quota=1.0,
+                        conditions={
+                            "reel_weights": {},
+                            "force_wincap": False,
+                            "force_freegame": False,
+                        },
+                    ),
+                ],
+            )
+            for mode in BUY_MODE_NAMES
         ]
