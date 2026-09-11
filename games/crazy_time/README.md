@@ -19,7 +19,7 @@ The matching web client lives in the separate `stake-web-sdk` repo at `apps/craz
   multiplied, a room's result is multiplied. Otherwise nothing happens.
 - **Rooms**, each a weighted table of gross multipliers on the chip:
   Pirate Plinko 13 slots (7x–400x, binomial landing weights), Bonus Wheel 36 wedges (10x–1,000x),
-  Treasure Chest 12 chests (2x–250x), Ocean Voyage 10 depths (2x–250x). A room's table is sized
+  Treasure Chest 12 chests (2x–250x), Ocean Voyage 10 depths (2x–400x). A room's table is sized
   to its segment count: the one-off Bonus Wheel pays the most per hit, the four chests the least.
 
 ## Bet modes (252): one per combination of spots
@@ -33,7 +33,7 @@ non-empty combination of the eight spots is a mode, named by the spots' codes in
 | a single number | 1 | 51 / 101 / 251 / 501 |
 | a single room (chest only; see below) | 1 | 12,500 |
 | anything containing the Bonus Wheel | n | 50,000 |
-| anything containing Pirate Plinko but not the Bonus Wheel | n | 20,000 |
+| anything containing Pirate Plinko or Ocean Voyage but not the Bonus Wheel | n | 20,000 |
 
 252 of 255 are published. `UNPUBLISHED_ALONE` = piratePlinko, oceanVoyage, bonusWheel: alone
 they cover 2, 2 and 1 segments and pay less than once in 20 spins (`MIN_HIT_RATE`), so those one-spot bets are not
@@ -52,7 +52,7 @@ landing weights (1 in 14.6 million; a pure binomial was 1 in 91 million).
 | `buy_any` | a room, weighted by segments (chest 4 / plinko 2 / voyage 2 / wheel 1) | 24 | 7,857 | 50,000 |
 | `buy_tc` | Treasure Chest | 13.5 | 3,564 | 12,500 |
 | `buy_pp` | Pirate Plinko | 27 | 2,106 | 20,000 |
-| `buy_ov` | Ocean Voyage | 27 | 1,620 | 12,500 |
+| `buy_ov` | Ocean Voyage | 27 | 1,620 | 20,000 |
 | `buy_bw` | Bonus Wheel | 54 | 567 | 50,000 |
 
 A buy goes straight into the room at the room's natural odds of also carrying a Top Slot

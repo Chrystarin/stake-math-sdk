@@ -143,9 +143,12 @@ CHEST_TABLE: Tuple[Tuple[int, int], ...] = (
 NUM_CHESTS = 12
 
 # Ocean Voyage: 10 depths, 4 tiles per depth. The dive ends at depth k (1..10); depth k
-# pays VOYAGE_DEPTHS[k-1]. Surfacing from the deepest one pays 250x.
-VOYAGE_DEPTHS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 35, 60, 120, 250)
-VOYAGE_DEPTH_WEIGHTS: Tuple[int, ...] = (22, 19, 16, 13, 10, 8, 6, 4, 2, 2)
+# pays VOYAGE_DEPTHS[k-1]. Surfacing from the deepest one pays 400x, which under the 50x Top
+# Slot is a 20,000x, the same ceiling as Pirate Plinko's edge slots. The deepest depth is as
+# rare as one of those edges (1 in 102) and the 120x carries the weight it gave up, so the
+# room's mean and Top Slot pairing barely move from the old 250x table.
+VOYAGE_DEPTHS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 35, 60, 120, 400)
+VOYAGE_DEPTH_WEIGHTS: Tuple[int, ...] = (22, 19, 16, 13, 10, 8, 6, 4, 3, 1)
 VOYAGE_TABLE: Tuple[Tuple[int, int], ...] = tuple(zip(VOYAGE_DEPTHS, VOYAGE_DEPTH_WEIGHTS))
 TILES_PER_DEPTH = 4
 
