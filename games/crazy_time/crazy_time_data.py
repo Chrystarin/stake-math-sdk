@@ -300,10 +300,15 @@ def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
 #
 # PRICE. Every spot returns TARGET_RTP on one chip, so a room's mean gross return per hit
 # (Top Slot included) is TARGET_RTP * 54 / segments. Charging 54 / segments chips for one hit
-# therefore returns exactly TARGET_RTP again; for the any-bonus buy the four rooms each
-# contribute the same expected amount, so the price is 4 x 54 / 13. Prices in chips: plinko 18,
-# wheel 18, voyage 18, chest 13.5, any 16.62 — which is also what chasing the rooms costs
-# naturally (four chips a spin, a room once every 4.15 spins).
+# therefore returns exactly TARGET_RTP again: plinko 18, wheel 18, voyage 18, chest 13.5.
+#
+# The any-bonus buy is priced at a WHOLE number, BUY_ANY_PRICE = 17. Picking the room the way the
+# wheel would (4 : 3 : 3 : 3) would make it 4 x 54 / 13 = 16.62, so instead the room is picked
+# with BUY_ANY_PICK weights chosen so the expected fair price is exactly 17: the chest (13.5) is
+# drawn 6 in 27, each 18-chip room 7 in 27, and 13.5 x 6/27 + 18 x 21/27 = 17. Same RTP as every
+# other mode, and the buy disc's four equal quarters are closer to honest for it (22 / 26 / 26 /
+# 26 % against the rim's 31 / 23 / 23 / 23). The client shows the price on the card and the
+# book authors the room, so nothing else needs to know the weights.
 #
 # STAKE RULES. Buy modes are not base modes, so the 1-in-20 hit-rate floor does not apply (they
 # always pay at least the room's minimum anyway); RTP must still sit with the other modes, and the
@@ -320,11 +325,28 @@ BUY_MODES: Dict[str, Tuple[str, ...]] = {
 BUY_MODE_NAMES: Tuple[str, ...] = tuple(BUY_MODES)
 ALL_MODE_NAMES: Tuple[str, ...] = MODE_NAMES + BUY_MODE_NAMES
 
+BUY_ANY_PRICE = 17
+# How often the any-bonus buy opens each room (weights, not segments); see PRICE above.
+BUY_ANY_PICK: Dict[str, int] = {"chest": 6, "piratePlinko": 7, "bonusWheel": 7, "oceanVoyage": 7}
+
+
+def _fair_price(room: str) -> Fraction:
+    """Chips that buy one visit to `room` at TARGET_RTP: 54 / its segments."""
+    return Fraction(NUM_SEGMENTS, SEGMENT_COUNT[room])
+
+
+assert set(BUY_ANY_PICK) == set(ROOM_SPOTS)
+assert sum(Fraction(w, sum(BUY_ANY_PICK.values())) * _fair_price(r) for r, w in BUY_ANY_PICK.items()) == BUY_ANY_PRICE, (
+    "BUY_ANY_PICK does not price the any-bonus buy at BUY_ANY_PRICE"
+)
+
 
 def buy_price(mode: str) -> Fraction:
-    """Cost of a buy in chips: rooms x 54 / segments covered (see the note above)."""
-    rooms = BUY_MODES[mode]
-    return Fraction(len(rooms) * NUM_SEGMENTS, sum(SEGMENT_COUNT[r] for r in rooms))
+    """Cost of a buy in chips: 54 / segments for a room, BUY_ANY_PRICE for any bonus."""
+    if mode == "buy_any":
+        return Fraction(BUY_ANY_PRICE)
+    (room,) = BUY_MODES[mode]
+    return _fair_price(room)
 
 
 def coverage(mode: str) -> Tuple[str, ...]:
@@ -348,23 +370,27 @@ def mode_cost(mode: str):
 Outcome = Tuple[int, int, int]
 
 
-def _enumerate(spots: Optional[Sequence[str]] = None) -> Tuple[List[Outcome], List[int]]:
+def _enumerate(
+    spots: Optional[Sequence[str]] = None, scale: Optional[Dict[str, int]] = None
+) -> Tuple[List[Outcome], List[int]]:
     """Every (segment, Top Slot entry, room outcome) with its weight; `spots` restricts the
-    segments (a buy only ever lands on its rooms' segments)."""
+    segments (a buy only ever lands on its rooms' segments) and `scale` multiplies a spot's
+    weights (the any-bonus buy picks rooms by BUY_ANY_PICK rather than by segments)."""
     outcomes: List[Outcome] = []
     weights: List[int] = []
     for seg, spot in enumerate(SEGMENT_LAYOUT):
         if spots is not None and spot not in spots:
             continue
+        mult = scale.get(spot, 1) if scale else 1
         for ts_i, (_, _, ts_w) in enumerate(TOP_SLOT_TABLE):
             if spot in ROOM_TABLES:
                 unit = ROOM_LCM // ROOM_TOTAL_WEIGHT[spot]
                 for r_i, (_, r_w) in enumerate(ROOM_TABLES[spot]):
                     outcomes.append((seg, ts_i, r_i))
-                    weights.append(ts_w * r_w * unit)
+                    weights.append(ts_w * r_w * unit * mult)
             else:
                 outcomes.append((seg, ts_i, -1))
-                weights.append(ts_w * ROOM_LCM)
+                weights.append(ts_w * ROOM_LCM * mult)
     return outcomes, weights
 
 
@@ -374,10 +400,21 @@ TOTAL_WEIGHT = sum(OUTCOME_WEIGHTS)
 assert TOTAL_WEIGHT == NUM_SEGMENTS * TOP_SLOT_TOTAL * ROOM_LCM
 assert TOTAL_WEIGHT < 2**64
 
-# Buy modes: the same outcome space cut down to the bought rooms' segments.
+
+def _buy_any_scale() -> Dict[str, int]:
+    """Integer factor per room that turns the segment shares (4 : 3 : 3 : 3) into BUY_ANY_PICK."""
+    ratios = {r: Fraction(w, SEGMENT_COUNT[r]) for r, w in BUY_ANY_PICK.items()}
+    common = lcm(*(f.denominator for f in ratios.values()))
+    return {r: int(f * common) for r, f in ratios.items()}
+
+
+# Buy modes: the same outcome space cut down to the bought rooms' segments (and, for the
+# any-bonus buy, re-weighted between rooms).
 BUY_OUTCOMES: Dict[str, Tuple[List[Outcome], List[int]]] = {
-    mode: _enumerate(rooms) for mode, rooms in BUY_MODES.items()
+    mode: _enumerate(rooms, _buy_any_scale() if mode == "buy_any" else None)
+    for mode, rooms in BUY_MODES.items()
 }
+assert all(sum(w) < 2**64 for _, w in BUY_OUTCOMES.values())
 
 
 def outcomes_for(mode: str) -> Tuple[List[Outcome], List[int]]:

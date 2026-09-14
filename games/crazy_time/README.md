@@ -56,18 +56,20 @@ the Bonus Wheel's 50,000x lands 1 in 9.5 million.
 
 | Mode | Opens | Price (chips) | Books | Max win |
 | --- | --- | --- | --- | --- |
-| `buy_any` | a room, weighted by segments (chest 4 / plinko 3 / voyage 3 / wheel 3) | 16.62 | 10,854 | 50,000 |
+| `buy_any` | a room, picked 6 : 7 : 7 : 7 (chest 22%, each other room 26%) | 17 | 10,854 | 50,000 |
 | `buy_tc` | Treasure Chest | 13.5 | 3,564 | 12,500 |
 | `buy_pp` | Pirate Plinko | 18 | 3,159 | 20,000 |
 | `buy_ov` | Ocean Voyage | 18 | 2,430 | 20,000 |
 | `buy_bw` | Bonus Wheel | 18 | 1,701 | 50,000 |
 
 A buy goes straight into the room at the room's natural odds of also carrying a Top Slot
-multiplier. Price = rooms x 54 / segments covered (`buy_price`): each spot returns the target on
-one chip, so a room's mean per hit is RTP x 54 / segments and that price returns the target again;
-the any-bonus price is what chasing the rooms costs naturally. Books are the base enumeration cut to
-the bought rooms' segments, so a buy book still carries a `wheelSpin` onto the room for the
-presentation. Flagged `is_buybonus` (no hit-rate floor; RTP band, spread and max-win floor still
+multiplier. A room's price is 54 / its segments (`buy_price`): each spot returns the target on
+one chip, so a room's mean per hit is RTP x 54 / segments and that price returns the target again.
+The any-bonus buy is a whole 17 chips (`BUY_ANY_PRICE`): picking rooms by segment share would
+make it 16.62, so it picks them by `BUY_ANY_PICK` (chest 6 : 7 : 7 : 7) instead, which prices out
+at exactly 17 at the same RTP. Books are the base enumeration cut to the bought rooms' segments
+(re-weighted between rooms for `buy_any`), so a buy book still carries a `wheelSpin` onto the room
+for the presentation. Flagged `is_buybonus` (no hit-rate floor; RTP band, spread and max-win floor still
 checked in `compliance()`).
 
 ## RTP: 96.7% on every mode
