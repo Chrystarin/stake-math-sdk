@@ -5,10 +5,10 @@ Money-wheel game show, single-player RNG, modelled on Evolution's Crazy Time:
   * a 54-segment wheel with 8 bet spots — four numbers (x1 x2 x5 x10) and four bonus rooms
     (Pirate Plinko, Bonus Wheel, Treasure Chest, Ocean Voyage);
   * a Top Slot that, before every spin, may attach a multiplier to ONE spot;
-  * one bet mode per COMBINATION of spots: every non-empty subset of the eight that clears
-    Stake's hit-rate floor (252 of the 255), so the player can chip any spots they like at
-    one chip each. The player's chip is `amount`; the RGS charges `cost x amount`, cost being
-    the number of spots covered (same shape as colour_dice / crimson_plinko).
+  * one bet mode per COMBINATION of spots: every non-empty subset of the eight (all 255), so
+    the player can chip any spots they like at one chip each, any room on its own included.
+    The player's chip is `amount`; the RGS charges `cost x amount`, cost being the number of
+    spots covered (same shape as colour_dice / crimson_plinko).
 
 OUTCOME MODEL
 -------------
@@ -36,11 +36,13 @@ STAKE COMPLIANCE (checked at import, see `compliance()`)
 --------------------------------------------------------
   * RTP inside the published band and identical across modes;
   * non-zero hit rate >= 1 in 20 per mode: a combination must cover at least 3 of the 54
-    segments, which excludes the three one-room bets on Pirate Plinko (2), Ocean Voyage (2)
-    and Bonus Wheel (1);
+    segments. Every spot does on its own (the rarest rooms have 3), so every one of the 255
+    combinations is a published mode. (Crazy Time's own 4/2/2/1 room split was tried first:
+    its 2- and 1-segment rooms could not be bet alone under this rule.)
   * the advertised max win of every mode reached at >= 1 in 20,000,000. The binding case is
-    the Pirate Plinko 400x slot under a 50x Top Slot, which is why its landing weights carry
-    a flat floor on top of the binomial (see PLINKO_TABLE).
+    Ocean Voyage's 400x depth under a 50x Top Slot (1 in 14.2 million); Pirate Plinko's 400x
+    edges are next (1 in 10.7 million), which is why its landing weights carry a flat floor on
+    top of the binomial (see PLINKO_TABLE); the Bonus Wheel's 1,000x sliver is 1 in 9.5 million.
 """
 
 from fractions import Fraction
@@ -63,32 +65,44 @@ SPOTS: Tuple[str, ...] = NUMBER_SPOTS + ROOM_SPOTS
 NUMBER_PAY: Dict[str, int] = {"x1": 1, "x2": 2, "x5": 5, "x10": 10}
 
 # Physical order around the rim, clockwise from the flapper. 54 entries.
-# Counts: x1 21, x2 13, x5 7, x10 4, chest 4, Pirate Plinko 2, Ocean Voyage 2, Bonus Wheel 1 —
-# Crazy Time's own split (21/13/7/4 numbers; Coin Flip 4, Pachinko 2, Cash Hunt 2, Crazy Time 1),
-# so the rooms rank chest < Pirate Plinko = Ocean Voyage < Bonus Wheel in rarity and the Bonus
-# Wheel is the one-off.
-# Rules: one room every six segments (exactly five numbers between any two rooms, so the nine
-# rooms are spread evenly: chests every 12, Pirate Plinko and Ocean Voyage each an opposite
-# pair, the Bonus Wheel on its own), x10 never next to x10.
+# Counts: x1 19, x2 12, x5 6, x10 4, chest 4, Pirate Plinko 3, Ocean Voyage 3, Bonus Wheel 3.
+# Every room has at least THREE segments so that a chip on any room alone pays at least once in
+# 20 spins (Stake's floor for a base mode, see MIN_HIT_RATE): 3 of 54 is 1 in 18. Crazy Time's
+# own 4/2/2/1 split was used before this and made the three rarer rooms company-only. The chest
+# keeps its fourth segment as the most frequent room; the Bonus Wheel's rarity now lives INSIDE
+# its room, in the 1,000x sliver (see WHEEL_TABLE), rather than on the rim.
+# Rules: rooms cycle chest -> Pirate Plinko -> Bonus Wheel -> Ocean Voyage around the rim
+# (thirteen rooms, the chest closing the loop), never adjacent, with three numbers between any
+# two rooms — four in two places, opposite each other, to make the 54 — and x10 never next to x10.
 SEGMENT_LAYOUT: Tuple[str, ...] = (
-    "chest", "x1", "x2", "x1", "x5", "x2",
-    "piratePlinko", "x1", "x10", "x1", "x2", "x1",
-    "chest", "x2", "x1", "x5", "x1", "x2",
-    "oceanVoyage", "x1", "x2", "x1", "x5", "x1",
-    "chest", "x1", "x10", "x2", "x1", "x2",
-    "piratePlinko", "x1", "x5", "x1", "x2", "x1",
-    "chest", "x2", "x1", "x10", "x1", "x5",
-    "oceanVoyage", "x1", "x2", "x1", "x5", "x2",
-    "bonusWheel", "x1", "x10", "x2", "x1", "x5",
+    "chest", "x1", "x2", "x1",
+    "piratePlinko", "x2", "x10", "x1",
+    "bonusWheel", "x1", "x5", "x2",
+    "oceanVoyage", "x1", "x2", "x1", "x5",
+    "chest", "x2", "x10", "x1",
+    "piratePlinko", "x1", "x5", "x2",
+    "bonusWheel", "x2", "x1", "x1",
+    "oceanVoyage", "x1", "x10", "x2",
+    "chest", "x1", "x5", "x2", "x1",
+    "piratePlinko", "x2", "x1", "x5",
+    "bonusWheel", "x1", "x10", "x2",
+    "oceanVoyage", "x1", "x2", "x1",
+    "chest", "x1", "x5", "x1",
 )
 NUM_SEGMENTS = len(SEGMENT_LAYOUT)
 SEGMENT_COUNT: Dict[str, int] = {spot: SEGMENT_LAYOUT.count(spot) for spot in SPOTS}
 
 assert NUM_SEGMENTS == 54, NUM_SEGMENTS
-assert SEGMENT_COUNT == {"x1": 21, "x2": 13, "x5": 7, "x10": 4, "piratePlinko": 2, "bonusWheel": 1, "chest": 4, "oceanVoyage": 2}, SEGMENT_COUNT
+assert SEGMENT_COUNT == {"x1": 19, "x2": 12, "x5": 6, "x10": 4, "piratePlinko": 3, "bonusWheel": 3, "chest": 4, "oceanVoyage": 3}, SEGMENT_COUNT
+_ROOM_CYCLE = ("chest", "piratePlinko", "bonusWheel", "oceanVoyage")
+_rooms_in_order = [s for s in SEGMENT_LAYOUT if s in ROOM_SPOTS]
+assert _rooms_in_order == [_ROOM_CYCLE[k % 4] for k in range(len(_rooms_in_order))], _rooms_in_order
+_room_at = [i for i, s in enumerate(SEGMENT_LAYOUT) if s in ROOM_SPOTS]
+_gaps = [(_room_at[(k + 1) % len(_room_at)] - _room_at[k]) % NUM_SEGMENTS - 1 for k in range(len(_room_at))]
+assert sorted(_gaps) == [3] * 11 + [4] * 2, _gaps
 for _i, _spot in enumerate(SEGMENT_LAYOUT):
     _next = SEGMENT_LAYOUT[(_i + 1) % NUM_SEGMENTS]
-    assert (_spot in ROOM_SPOTS) == (_i % 6 == 0), f"room spacing broken at {_i}"
+    assert not (_spot in ROOM_SPOTS and _next in ROOM_SPOTS), f"rooms adjacent at {_i}"
     assert not (_spot == "x10" and _next == "x10"), f"x10 adjacent at {_i}"
 
 # ---------------------------------------------------------------------------
@@ -105,36 +119,57 @@ TOP_SLOT_TOTAL = 1_000_000
 # ---------------------------------------------------------------------------
 # Bonus rooms: (gross multiplier on the chip, weight)
 # ---------------------------------------------------------------------------
-# Pirate Plinko: 13 landing slots, symmetric. Min 7x, top 400x. Landing weights are binomial(12) plus a
+# Pirate Plinko: 13 landing slots, symmetric. Min 5x, top 400x. Landing weights are binomial(12) plus a
 # flat floor of PLINKO_WEIGHT_FLOOR per slot: a pure binomial puts the 400x edges at 2 in 4096,
-# which under a 50x Top Slot is a 20,000x that lands about once in 91 million, below Stake's
-# 1-in-20,000,000 achievability floor for an advertised max win. The floor lifts the edges to
-# 18 in 4200 (about 1 in 14.6 million with the Top Slot) at the cost of a slightly richer mean,
-# which the pairing solver absorbs.
-PLINKO_SLOTS: Tuple[int, ...] = (400, 100, 50, 30, 20, 12, 7, 12, 20, 30, 50, 100, 400)
+# which under a 50x Top Slot is a 20,000x that lands too rarely for Stake's 1-in-20,000,000
+# achievability floor for an advertised max win. The floor lifts the edges to 18 in 4200 (about
+# 1 in 10.7 million with the Top Slot) at the cost of a slightly richer mean, which the pairing
+# solver absorbs. The inner slots are lean (12.7x mean) because a 3-segment room may only return
+# 17.4x per visit, Top Slot included — see _solve_pairing.
+PLINKO_SLOTS: Tuple[int, ...] = (400, 80, 30, 20, 12, 8, 5, 8, 12, 20, 30, 80, 400)
 PLINKO_WEIGHT_FLOOR = 8
 PLINKO_TABLE: Tuple[Tuple[int, int], ...] = tuple(
     (v, comb(12, i) + PLINKO_WEIGHT_FLOOR) for i, v in enumerate(PLINKO_SLOTS)
 )
 
-# Bonus Wheel: 36 wedges. Weight == number of wedges carrying that value. The one-off segment of
-# the main wheel, so it carries the richest table: min 10x, one 1,000x jackpot wedge, which under
-# the 50x Top Slot is the game's 50,000x max win. The table is deliberately LEAN around that
-# wedge (no 150x, a single 50x): the richer the room's mean, the less Top Slot pairing it needs,
-# and the 50,000x only exists when a 50x pairs with this room. At a 45.3x mean it lands about
-# 1 in 11.8 million; with the old 500x wedge simply doubled it would have been 1 in 47 million,
-# under Stake's 1-in-20,000,000 floor.
-WHEEL_TABLE: Tuple[Tuple[int, int], ...] = ((10, 15), (15, 9), (20, 6), (25, 3), (50, 1), (100, 1), (1000, 1))
-WHEEL_WEDGES = sum(w for _, w in WHEEL_TABLE)  # 36
-# Wedge order around the bonus wheel (index -> value): the three big wedges a third of a turn
-# apart, the 25s and 20s spaced between them, 10s and 15s filling in.
-WHEEL_LAYOUT: Tuple[int, ...] = (
-    1000, 10, 15, 20, 10, 10, 25, 15, 10, 20, 15, 10, 100, 10, 15, 20, 10, 10,
-    25, 15, 10, 20, 15, 10, 50, 10, 15, 20, 10, 10, 25, 15, 10, 20, 15, 10,
+# Bonus Wheel: 36 wedges, 35 of them full width and one JACKPOT SLIVER a quarter as wide. Weight
+# is the wedge's width in units of WHEEL_SLIVER_UNITS (a full wedge is WHEEL_WEDGE_UNITS of them),
+# so the wheel is honest: a wedge lands in proportion to the arc it shows.
+#
+# The sliver is what keeps the game's 50,000x max win (1,000x under a 50x Top Slot) on a room
+# that now has three segments of the main wheel. A 3-segment room may only return 17.4x per visit
+# (see _solve_pairing); a 1,000x wedge landing 1 in 36 would be 27.8x on its own, so the jackpot
+# has to be rarer INSIDE the room — 1 in 141 visits at quarter width — and the rest of the wheel
+# lean around it (2x floor, 13.9x mean). Stake's 1-in-20,000,000 max-win floor holds it from the
+# other side: at 1 in 141 the 50,000x lands about 1 in 9.5 million, and a sliver much narrower
+# than this (an eighth, say) would leave the room no Top Slot lift and miss that floor.
+WHEEL_WEDGE_UNITS = 4
+WHEEL_SLIVER_UNITS = 1
+WHEEL_SLIVER_VALUE = 1000
+WHEEL_TABLE: Tuple[Tuple[int, int], ...] = (
+    (2, 16 * WHEEL_WEDGE_UNITS),
+    (3, 8 * WHEEL_WEDGE_UNITS),
+    (5, 6 * WHEEL_WEDGE_UNITS),
+    (10, 3 * WHEEL_WEDGE_UNITS),
+    (25, 1 * WHEEL_WEDGE_UNITS),
+    (100, 1 * WHEEL_WEDGE_UNITS),
+    (WHEEL_SLIVER_VALUE, WHEEL_SLIVER_UNITS),
 )
-assert len(WHEEL_LAYOUT) == WHEEL_WEDGES
+WHEEL_UNITS = sum(w for _, w in WHEEL_TABLE)  # 141
+# Wedge order around the bonus wheel (index -> value): the sliver at the top, the 100x opposite
+# it, the 25x a quarter turn on, the 10s a third of a turn apart, 5s and 3s spaced, 2s filling in.
+WHEEL_LAYOUT: Tuple[int, ...] = (
+    1000, 2, 3, 2, 5, 2, 10, 2, 3, 25, 2, 5, 2, 3, 2, 10, 2, 5,
+    100, 2, 3, 2, 5, 2, 10, 2, 3, 5, 2, 3, 2, 5, 2, 3, 2, 3,
+)
+WHEEL_WEDGES = len(WHEEL_LAYOUT)  # 36
+# Width of each wedge, in the table's units; what the client draws and what the LUT weighs.
+WHEEL_WIDTHS: Tuple[int, ...] = tuple(
+    WHEEL_SLIVER_UNITS if v == WHEEL_SLIVER_VALUE else WHEEL_WEDGE_UNITS for v in WHEEL_LAYOUT
+)
+assert sum(WHEEL_WIDTHS) == WHEEL_UNITS
 for _v, _w in WHEEL_TABLE:
-    assert WHEEL_LAYOUT.count(_v) == _w, (_v, _w)
+    assert sum(u for v, u in zip(WHEEL_LAYOUT, WHEEL_WIDTHS) if v == _v) == _w, (_v, _w)
 
 # Treasure chest: the player opens one of 12 chests; the awarded value comes from this table.
 CHEST_TABLE: Tuple[Tuple[int, int], ...] = (
@@ -144,10 +179,10 @@ NUM_CHESTS = 12
 
 # Ocean Voyage: 10 depths, 4 tiles per depth. The dive ends at depth k (1..10); depth k
 # pays VOYAGE_DEPTHS[k-1]. Surfacing from the deepest one pays 400x, which under the 50x Top
-# Slot is a 20,000x, the same ceiling as Pirate Plinko's edge slots. The deepest depth is as
-# rare as one of those edges (1 in 102) and the 120x carries the weight it gave up, so the
-# room's mean and Top Slot pairing barely move from the old 250x table.
-VOYAGE_DEPTHS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 35, 60, 120, 400)
+# Slot is a 20,000x, the same ceiling as Pirate Plinko's edge slots; it is reached 1 in 102
+# dives (1 in 14.2 million with the Top Slot). The middle depths are lean (15.5x mean) for the
+# same reason as Plinko's: a 3-segment room returns 17.4x per visit, Top Slot included.
+VOYAGE_DEPTHS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 30, 50, 80, 400)
 VOYAGE_DEPTH_WEIGHTS: Tuple[int, ...] = (22, 19, 16, 13, 10, 8, 6, 4, 3, 1)
 VOYAGE_TABLE: Tuple[Tuple[int, int], ...] = tuple(zip(VOYAGE_DEPTHS, VOYAGE_DEPTH_WEIGHTS))
 TILES_PER_DEPTH = 4
@@ -243,9 +278,12 @@ def _all_combinations() -> Dict[str, Tuple[str, ...]]:
 
 MODE_COVERAGE: Dict[str, Tuple[str, ...]] = _all_combinations()
 MODE_NAMES: Tuple[str, ...] = tuple(MODE_COVERAGE)
-# Spots whose one-spot bet fails the hit-rate floor and is therefore NOT published alone.
+# Spots whose one-spot bet would fail the hit-rate floor. Every spot covers at least 3 of the 54
+# segments (see SEGMENT_LAYOUT), so this is empty and all 255 combinations are published; it is
+# kept as the guard that says so, should the rim ever change again.
 UNPUBLISHED_ALONE: Tuple[str, ...] = tuple(s for s in SPOTS if not _clears_hit_rate((s,)))
-assert len(MODE_COVERAGE) == 2 ** len(SPOTS) - 1 - len(UNPUBLISHED_ALONE), len(MODE_COVERAGE)
+assert not UNPUBLISHED_ALONE, f"rooms too rare to bet alone: {UNPUBLISHED_ALONE}"
+assert len(MODE_COVERAGE) == 2 ** len(SPOTS) - 1, len(MODE_COVERAGE)
 
 
 def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
@@ -258,14 +296,14 @@ def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # A buy skips the wait for the wheel and goes straight into a room, at the room's natural odds
 # of ALSO carrying a Top Slot multiplier. Four per-room buys and one "any bonus" buy that lands on
-# a room the way the wheel would, weighted by segments (chest 4, plinko 2, voyage 2, wheel 1).
+# a room the way the wheel would, weighted by segments (chest 4, plinko 3, voyage 3, wheel 3).
 #
 # PRICE. Every spot returns TARGET_RTP on one chip, so a room's mean gross return per hit
 # (Top Slot included) is TARGET_RTP * 54 / segments. Charging 54 / segments chips for one hit
 # therefore returns exactly TARGET_RTP again; for the any-bonus buy the four rooms each
-# contribute the same expected amount, so the price is 4 x 54 / 9 = 24. Prices in chips:
-# plinko 27, wheel 54, chest 13.5, voyage 27, any 24. The 24 is also what chasing the rooms costs
-# naturally (four chips a spin, a room once every six spins), which is easy to explain.
+# contribute the same expected amount, so the price is 4 x 54 / 13. Prices in chips: plinko 18,
+# wheel 18, voyage 18, chest 13.5, any 16.62 — which is also what chasing the rooms costs
+# naturally (four chips a spin, a room once every 4.15 spins).
 #
 # STAKE RULES. Buy modes are not base modes, so the 1-in-20 hit-rate floor does not apply (they
 # always pay at least the room's minimum anyway); RTP must still sit with the other modes, and the
@@ -528,9 +566,9 @@ if __name__ == "__main__":
     print(f"Top Slot E[m | aligned] = {float(TOP_SLOT_MEAN):.4f}, miss share = {_miss / TOP_SLOT_TOTAL:.4f}")
     for spot in SPOTS:
         print(f"  {spot:7s} segs {SEGMENT_COUNT[spot]:2d}  q={float(TOP_SLOT_PAIRING[spot]):.4f}  return={float(spot_return(spot)):.6f}")
-    print(f"modes: {len(MODE_NAMES)} (not published alone: {UNPUBLISHED_ALONE})")
+    print(f"modes: {len(MODE_NAMES)} (every spot bettable alone: {not UNPUBLISHED_ALONE})")
     worst = min(COMPLIANCE.items(), key=lambda kv: kv[1]["p_max_win"])
     print(f"rarest max win: {worst[0]} {worst[1]['max_win']}x at 1 in {float(1 / worst[1]['p_max_win']):,.0f}")
-    for mode in ("x1", "pp_ov", "pp_bw_tc_ov", "x1_x2_x5_x10_pp_bw_tc_ov") + BUY_MODE_NAMES:
+    for mode in ("x1", "pp", "bw", "ov", "pp_bw_tc_ov", "x1_x2_x5_x10_pp_bw_tc_ov") + BUY_MODE_NAMES:
         c = COMPLIANCE[mode]
         print(f"mode {mode:26s} cost {float(mode_cost(mode)):5.1f}  books {books_for_mode(mode):5d}  rtp {float(c['rtp']):.6f}  hit 1 in {float(1 / c['hit_rate']):.1f}  max_win {c['max_win']}x at 1 in {float(1 / c['p_max_win']):,.0f}")

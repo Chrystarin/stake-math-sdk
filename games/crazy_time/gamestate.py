@@ -11,6 +11,7 @@ from crazy_time_data import (
     TILES_PER_DEPTH,
     VOYAGE_DEPTHS,
     WHEEL_LAYOUT,
+    WHEEL_WIDTHS,
     chest_layout,
     decode_outcome,
     outcome_details,
@@ -127,6 +128,8 @@ class GameState(GameStateOverride):
             return {
                 "type": "bonusWheelRoom",
                 "wedges": [v * top_slot for v in WHEEL_LAYOUT],
+                # Each wedge's width in the table's units: the 1,000x is a quarter-width sliver.
+                "widths": list(WHEEL_WIDTHS),
                 "wedge": wheel_wedge_for_value(sim, value),
                 **common,
             }
