@@ -71,39 +71,53 @@ NUMBER_PAY: Dict[str, int] = {"x1": 1, "x2": 2, "x5": 5, "x10": 10}
 # own 4/2/2/1 split was used before this and made the three rarer rooms company-only. The chest
 # keeps its fourth segment as the most frequent room; the Bonus Wheel's rarity now lives INSIDE
 # its room, in the 1,000x sliver (see WHEEL_TABLE), rather than on the rim.
-# Rules: rooms cycle chest -> Pirate Plinko -> Bonus Wheel -> Ocean Voyage around the rim
-# (thirteen rooms, the chest closing the loop), never adjacent, with three numbers between any
-# two rooms — four in two places, opposite each other, to make the 54 — and x10 never next to x10.
+# Rules: rooms are never adjacent and always have three or four numbers between them (four in
+# two places, opposite each other, to make the 54); no two identical segments touch anywhere,
+# x1 included; and within that each spot's own segments sit as evenly round the rim as the
+# counts allow — the chest's four 12 / 13 / 13 / 16 apart, each three-segment room's 16..21
+# (ideal 13.5 and 18), the x10s 13 / 13 / 14 / 14, the x5s 8..10, the x2s 3..6, the x1s 2..4.
+# The three-or-four-numbers rule is what caps the rooms' evenness: the thirteen rooms fall on a
+# near-uniform grid of 54 / 13 = 4.15, so a three-segment room's copies are 4 or 5 grid steps
+# apart (16..21), and a chest's 3 or 4 (12..16). Found by exhaustive search: rooms first, then
+# x10 and x5 into the number runs, then x1 / x2 alternating through every run that is left.
 SEGMENT_LAYOUT: Tuple[str, ...] = (
+    "chest", "x5", "x1", "x2",
+    "piratePlinko", "x1", "x10", "x1",
+    "bonusWheel", "x2", "x5", "x1",
     "chest", "x1", "x2", "x1",
-    "piratePlinko", "x2", "x10", "x1",
-    "bonusWheel", "x1", "x5", "x2",
-    "oceanVoyage", "x1", "x2", "x1", "x5",
-    "chest", "x2", "x10", "x1",
-    "piratePlinko", "x1", "x5", "x2",
-    "bonusWheel", "x2", "x1", "x1",
-    "oceanVoyage", "x1", "x10", "x2",
-    "chest", "x1", "x5", "x2", "x1",
+    "oceanVoyage", "x2", "x5", "x1", "x10",
+    "piratePlinko", "x1", "x2", "x1",
+    "chest", "x2", "x5", "x1",
+    "bonusWheel", "x1", "x2", "x1",
+    "oceanVoyage", "x10", "x1", "x5", "x2",
+    "chest", "x1", "x2", "x1",
     "piratePlinko", "x2", "x1", "x5",
-    "bonusWheel", "x1", "x10", "x2",
+    "bonusWheel", "x10", "x1", "x2",
     "oceanVoyage", "x1", "x2", "x1",
-    "chest", "x1", "x5", "x1",
 )
 NUM_SEGMENTS = len(SEGMENT_LAYOUT)
 SEGMENT_COUNT: Dict[str, int] = {spot: SEGMENT_LAYOUT.count(spot) for spot in SPOTS}
 
 assert NUM_SEGMENTS == 54, NUM_SEGMENTS
 assert SEGMENT_COUNT == {"x1": 19, "x2": 12, "x5": 6, "x10": 4, "piratePlinko": 3, "bonusWheel": 3, "chest": 4, "oceanVoyage": 3}, SEGMENT_COUNT
-_ROOM_CYCLE = ("chest", "piratePlinko", "bonusWheel", "oceanVoyage")
-_rooms_in_order = [s for s in SEGMENT_LAYOUT if s in ROOM_SPOTS]
-assert _rooms_in_order == [_ROOM_CYCLE[k % 4] for k in range(len(_rooms_in_order))], _rooms_in_order
+
+
+def _own_gaps(spot: str) -> List[int]:
+    """Rim distance from each of `spot`'s segments to its next, clockwise."""
+    at = [i for i, s in enumerate(SEGMENT_LAYOUT) if s == spot]
+    return [(at[(k + 1) % len(at)] - at[k]) % NUM_SEGMENTS for k in range(len(at))]
+
+
+# Each spot's copies are spread evenly: no gap between two of a spot's segments strays more
+# than this from the ideal 54 / count (see the rules above for why the rooms allow 3).
+for _spot, _tolerance in (("chest", 3), ("piratePlinko", 3), ("bonusWheel", 3), ("oceanVoyage", 3), ("x10", 0.5), ("x5", 1), ("x2", 1.5), ("x1", 1.2)):
+    _ideal = NUM_SEGMENTS / SEGMENT_COUNT[_spot]
+    assert all(abs(g - _ideal) <= _tolerance for g in _own_gaps(_spot)), (_spot, _own_gaps(_spot))
 _room_at = [i for i, s in enumerate(SEGMENT_LAYOUT) if s in ROOM_SPOTS]
 _gaps = [(_room_at[(k + 1) % len(_room_at)] - _room_at[k]) % NUM_SEGMENTS - 1 for k in range(len(_room_at))]
 assert sorted(_gaps) == [3] * 11 + [4] * 2, _gaps
 for _i, _spot in enumerate(SEGMENT_LAYOUT):
-    _next = SEGMENT_LAYOUT[(_i + 1) % NUM_SEGMENTS]
-    assert not (_spot in ROOM_SPOTS and _next in ROOM_SPOTS), f"rooms adjacent at {_i}"
-    assert not (_spot == "x10" and _next == "x10"), f"x10 adjacent at {_i}"
+    assert _spot != SEGMENT_LAYOUT[(_i + 1) % NUM_SEGMENTS], f"identical segments adjacent at {_i}"
 
 # ---------------------------------------------------------------------------
 # Top Slot
@@ -177,7 +191,8 @@ CHEST_TABLE: Tuple[Tuple[int, int], ...] = (
 )
 NUM_CHESTS = 12
 
-# Ocean Voyage: 10 depths, 4 tiles per depth. The dive ends at depth k (1..10); depth k
+# Ocean Voyage: 10 depths, 3 tiles per depth (the tiles are cosmetic: the client draws the
+# player's own course, and only the depth reached pays). The dive ends at depth k (1..10); depth k
 # pays VOYAGE_DEPTHS[k-1]. Surfacing from the deepest one pays 400x, which under the 50x Top
 # Slot is a 20,000x, the same ceiling as Pirate Plinko's edge slots; it is reached 1 in 102
 # dives (1 in 14.2 million with the Top Slot). The middle depths are lean (15.5x mean) for the
@@ -185,7 +200,7 @@ NUM_CHESTS = 12
 VOYAGE_DEPTHS: Tuple[int, ...] = (2, 3, 5, 8, 12, 20, 30, 50, 80, 400)
 VOYAGE_DEPTH_WEIGHTS: Tuple[int, ...] = (22, 19, 16, 13, 10, 8, 6, 4, 3, 1)
 VOYAGE_TABLE: Tuple[Tuple[int, int], ...] = tuple(zip(VOYAGE_DEPTHS, VOYAGE_DEPTH_WEIGHTS))
-TILES_PER_DEPTH = 4
+TILES_PER_DEPTH = 3
 
 ROOM_TABLES: Dict[str, Tuple[Tuple[int, int], ...]] = {
     "piratePlinko": PLINKO_TABLE,

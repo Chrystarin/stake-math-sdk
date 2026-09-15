@@ -12,9 +12,11 @@ The matching web client lives in the separate `stake-web-sdk` repo at `apps/craz
   `oceanVoyage` 3, `bonusWheel` 3. Every room has at least three segments so that a chip on any
   room ALONE pays at least once in 20 spins (Stake's floor for a base mode; 3 of 54 is 1 in 18).
   Crazy Time's own 4/2/2/1 split was used before this and left its three rarer rooms
-  company-only. Layout in `SEGMENT_LAYOUT`: thirteen rooms cycling chest → Plinko → Wheel →
-  Voyage, never adjacent, three numbers between any two (four in two places, opposite each
-  other); x10 never next to x10.
+  company-only. Layout in `SEGMENT_LAYOUT`: rooms never adjacent, three or four numbers between
+  any two (four in two places, opposite each other); no two identical segments touch, x1
+  included; and each spot's own segments as evenly spaced as that allows (chest 12 / 13 / 13 /
+  16 apart, each three-segment room 16..21, x10 13..14, x5 8..10, x2 3..6, x1 2..4). Asserted
+  at import; the book's `segment` index points into this order, so the client's copy must match.
 - **Numbers** pay n:1 (x1 returns 2x the chip).
 - **Top Slot**: before each spin one spot may be paired with a multiplier from
   `2 3 4 5 7 10 15 20 25 50`. If the wheel then lands on that spot, a number's n:1 payout is
