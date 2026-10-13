@@ -5,10 +5,12 @@ Money-wheel game show, single-player RNG, modelled on Evolution's Crazy Time:
   * a 54-segment wheel with 8 bet spots — four numbers (x1 x2 x5 x10) and four bonus rooms
     (Pirate Plinko, Bonus Wheel, Treasure Chest, Ocean Voyage);
   * a Top Slot that, before every spin, may attach a multiplier to ONE spot;
-  * one bet mode per COMBINATION of spots: every non-empty subset of the eight (all 255), so
-    the player can chip any spots they like at one chip each, any room on its own included.
-    The player's chip is `amount`; the RGS charges `cost x amount`, cost being the number of
-    spots covered (same shape as colour_dice / crimson_plinko).
+  * fifteen bet modes, under Stake's cap of MAX_MODES (20) per game: eleven board tickets —
+    each of the eight spots alone, the four numbers, the four rooms, the whole board — at one
+    chip per spot, plus a buy for each of the four rooms. (Every one of the 255 combinations
+    was published before the cap, 2026-09 to 2026-10.) The player's chip is `amount`; the RGS
+    charges `cost x amount`, cost being the number of spots covered (same shape as colour_dice
+    / crimson_plinko).
 
 OUTCOME MODEL
 -------------
@@ -29,16 +31,17 @@ and for a room with mean multiplier R it is
     P(hit) * R * (1 + q * (E[m] - 1))                (Top Slot multiplies the room result)
 
 Solving each for q gives the Top Slot table; the leftover mass is the "miss" reel position.
-Because every spot returns TARGET_RTP, every combination does too (linearity), so all 252
+Because every spot returns TARGET_RTP, every ticket does too (linearity), so all fifteen
 modes certify at one number with zero cross-mode spread.
 
 STAKE COMPLIANCE (checked at import, see `compliance()`)
 --------------------------------------------------------
   * RTP inside the published band and identical across modes;
-  * non-zero hit rate >= 1 in 20 per mode: a combination must cover at least 3 of the 54
-    segments. Every spot does on its own (the rarest rooms have 3), so every one of the 255
-    combinations is a published mode. (Crazy Time's own 4/2/2/1 room split was tried first:
-    its 2- and 1-segment rooms could not be bet alone under this rule.)
+  * non-zero hit rate >= 1 in 20 per mode: a ticket must cover at least 3 of the 54
+    segments. Every spot does on its own (the rarest rooms have 3), so every spot can be bet
+    alone. (Crazy Time's own 4/2/2/1 room split was tried first: its 2- and 1-segment rooms
+    could not be bet alone under this rule.)
+  * at most MAX_MODES modes in the publish.
   * the advertised max win of every mode reached at >= 1 in 20,000,000. The binding case is
     Ocean Voyage's 400x depth under a 50x Top Slot (1 in 14.2 million); Pirate Plinko's 400x
     edges are next (1 in 10.7 million), which is why its landing weights carry a flat floor on
@@ -46,7 +49,6 @@ STAKE COMPLIANCE (checked at import, see `compliance()`)
 """
 
 from fractions import Fraction
-from itertools import combinations
 from math import comb, lcm
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -257,8 +259,11 @@ TOP_SLOT_TABLE = tuple(_entries)
 TOP_SLOT_MISS_INDEX = len(TOP_SLOT_TABLE) - 1
 
 # ---------------------------------------------------------------------------
-# Modes: one per combination of spots
+# Modes: the published tickets
 # ---------------------------------------------------------------------------
+# Stake caps a game at this many modes (approval guidelines, read 2026-10-14: "a game can have
+# at most 20 modes", and the publish fails above it).
+MAX_MODES = 20
 # Short code per spot; a mode name is the covered spots' codes joined in SPOTS order, e.g.
 # "x1" (one spot), "pp_bw_tc_ov" (all four rooms), "x1_x2_x5_x10_pp_bw_tc_ov" (full board).
 # The web client derives the same name from the board, so the two must never diverge.
@@ -282,23 +287,27 @@ def _clears_hit_rate(spots: Sequence[str]) -> bool:
     return sum(SEGMENT_COUNT[s] for s in spots) * MIN_HIT_RATE >= NUM_SEGMENTS
 
 
-def _all_combinations() -> Dict[str, Tuple[str, ...]]:
+def _published_tickets() -> Dict[str, Tuple[str, ...]]:
+    """The eleven board bets: each spot alone, the four numbers (MULTI on the board), the four
+    rooms (BONUS) and the whole board (ALL). With the four room buys that is 15 modes, under
+    Stake's cap; the 255 free combinations published before it are gone, and the client's board
+    only accepts these tickets."""
+    tickets: List[Tuple[str, ...]] = [(spot,) for spot in SPOTS] + [NUMBER_SPOTS, ROOM_SPOTS, SPOTS]
     modes: Dict[str, Tuple[str, ...]] = {}
-    for k in range(1, len(SPOTS) + 1):
-        for spots in combinations(SPOTS, k):
-            if _clears_hit_rate(spots):
-                modes[mode_name(spots)] = spots
+    for spots in tickets:
+        assert _clears_hit_rate(spots), f"ticket too rare to publish: {spots}"
+        modes[mode_name(spots)] = tuple(spots)
     return modes
 
 
-MODE_COVERAGE: Dict[str, Tuple[str, ...]] = _all_combinations()
+MODE_COVERAGE: Dict[str, Tuple[str, ...]] = _published_tickets()
 MODE_NAMES: Tuple[str, ...] = tuple(MODE_COVERAGE)
 # Spots whose one-spot bet would fail the hit-rate floor. Every spot covers at least 3 of the 54
-# segments (see SEGMENT_LAYOUT), so this is empty and all 255 combinations are published; it is
+# segments (see SEGMENT_LAYOUT), so this is empty and every spot is a ticket on its own; it is
 # kept as the guard that says so, should the rim ever change again.
 UNPUBLISHED_ALONE: Tuple[str, ...] = tuple(s for s in SPOTS if not _clears_hit_rate((s,)))
 assert not UNPUBLISHED_ALONE, f"rooms too rare to bet alone: {UNPUBLISHED_ALONE}"
-assert len(MODE_COVERAGE) == 2 ** len(SPOTS) - 1, len(MODE_COVERAGE)
+assert len(MODE_COVERAGE) == len(SPOTS) + 3, len(MODE_COVERAGE)
 
 
 def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
@@ -310,20 +319,13 @@ def mode_for_spots(spots: Sequence[str]) -> Optional[str]:
 # Buy-bonus modes
 # ---------------------------------------------------------------------------
 # A buy skips the wait for the wheel and goes straight into a room, at the room's natural odds
-# of ALSO carrying a Top Slot multiplier. Four per-room buys and one "any bonus" buy that lands on
-# a room the way the wheel would, weighted by segments (chest 4, plinko 3, voyage 3, wheel 3).
+# of ALSO carrying a Top Slot multiplier. One buy per room. (A fifth "any bonus" buy, priced at a
+# whole 17 chips by picking the room 6 : 7 : 7 : 7, was published until the 20-mode cap made
+# every mode count; it is gone with the free spot combinations.)
 #
 # PRICE. Every spot returns TARGET_RTP on one chip, so a room's mean gross return per hit
 # (Top Slot included) is TARGET_RTP * 54 / segments. Charging 54 / segments chips for one hit
 # therefore returns exactly TARGET_RTP again: plinko 18, wheel 18, voyage 18, chest 13.5.
-#
-# The any-bonus buy is priced at a WHOLE number, BUY_ANY_PRICE = 17. Picking the room the way the
-# wheel would (4 : 3 : 3 : 3) would make it 4 x 54 / 13 = 16.62, so instead the room is picked
-# with BUY_ANY_PICK weights chosen so the expected fair price is exactly 17: the chest (13.5) is
-# drawn 6 in 27, each 18-chip room 7 in 27, and 13.5 x 6/27 + 18 x 21/27 = 17. Same RTP as every
-# other mode, and the buy disc's four equal quarters are closer to honest for it (22 / 26 / 26 /
-# 26 % against the rim's 31 / 23 / 23 / 23). The client shows the price on the card and the
-# book authors the room, so nothing else needs to know the weights.
 #
 # STAKE RULES. Buy modes are not base modes, so the 1-in-20 hit-rate floor does not apply (they
 # always pay at least the room's minimum anyway); RTP must still sit with the other modes, and the
@@ -335,14 +337,10 @@ BUY_MODES: Dict[str, Tuple[str, ...]] = {
     "buy_bw": ("bonusWheel",),
     "buy_tc": ("chest",),
     "buy_ov": ("oceanVoyage",),
-    "buy_any": ROOM_SPOTS,
 }
 BUY_MODE_NAMES: Tuple[str, ...] = tuple(BUY_MODES)
 ALL_MODE_NAMES: Tuple[str, ...] = MODE_NAMES + BUY_MODE_NAMES
-
-BUY_ANY_PRICE = 17
-# How often the any-bonus buy opens each room (weights, not segments); see PRICE above.
-BUY_ANY_PICK: Dict[str, int] = {"chest": 6, "piratePlinko": 7, "bonusWheel": 7, "oceanVoyage": 7}
+assert len(ALL_MODE_NAMES) <= MAX_MODES, f"{len(ALL_MODE_NAMES)} modes; Stake allows {MAX_MODES}"
 
 
 def _fair_price(room: str) -> Fraction:
@@ -350,22 +348,14 @@ def _fair_price(room: str) -> Fraction:
     return Fraction(NUM_SEGMENTS, SEGMENT_COUNT[room])
 
 
-assert set(BUY_ANY_PICK) == set(ROOM_SPOTS)
-assert sum(Fraction(w, sum(BUY_ANY_PICK.values())) * _fair_price(r) for r, w in BUY_ANY_PICK.items()) == BUY_ANY_PRICE, (
-    "BUY_ANY_PICK does not price the any-bonus buy at BUY_ANY_PRICE"
-)
-
-
 def buy_price(mode: str) -> Fraction:
-    """Cost of a buy in chips: 54 / segments for a room, BUY_ANY_PRICE for any bonus."""
-    if mode == "buy_any":
-        return Fraction(BUY_ANY_PRICE)
+    """Cost of a buy in chips: 54 / the room's segments."""
     (room,) = BUY_MODES[mode]
     return _fair_price(room)
 
 
 def coverage(mode: str) -> Tuple[str, ...]:
-    """The spots a mode pays on: the combination's spots, or the rooms a buy can open."""
+    """The spots a mode pays on: the ticket's spots, or the room a buy opens."""
     return MODE_COVERAGE.get(mode) or BUY_MODES[mode]
 
 
@@ -374,7 +364,7 @@ def is_buy_mode(mode: str) -> bool:
 
 
 def mode_cost(mode: str):
-    """Chips charged per `amount`: spots covered for a combination, the price for a buy."""
+    """Chips charged per `amount`: spots covered for a ticket, the price for a buy."""
     return buy_price(mode) if mode in BUY_MODES else len(MODE_COVERAGE[mode])
 
 
@@ -385,49 +375,36 @@ def mode_cost(mode: str):
 Outcome = Tuple[int, int, int]
 
 
-def _enumerate(
-    spots: Optional[Sequence[str]] = None, scale: Optional[Dict[str, int]] = None
-) -> Tuple[List[Outcome], List[int]]:
+def _enumerate(spots: Optional[Sequence[str]] = None) -> Tuple[List[Outcome], List[int]]:
     """Every (segment, Top Slot entry, room outcome) with its weight; `spots` restricts the
-    segments (a buy only ever lands on its rooms' segments) and `scale` multiplies a spot's
-    weights (the any-bonus buy picks rooms by BUY_ANY_PICK rather than by segments)."""
+    segments (a buy only ever lands on its room's segments)."""
     outcomes: List[Outcome] = []
     weights: List[int] = []
     for seg, spot in enumerate(SEGMENT_LAYOUT):
         if spots is not None and spot not in spots:
             continue
-        mult = scale.get(spot, 1) if scale else 1
         for ts_i, (_, _, ts_w) in enumerate(TOP_SLOT_TABLE):
             if spot in ROOM_TABLES:
                 unit = ROOM_LCM // ROOM_TOTAL_WEIGHT[spot]
                 for r_i, (_, r_w) in enumerate(ROOM_TABLES[spot]):
                     outcomes.append((seg, ts_i, r_i))
-                    weights.append(ts_w * r_w * unit * mult)
+                    weights.append(ts_w * r_w * unit)
             else:
                 outcomes.append((seg, ts_i, -1))
-                weights.append(ts_w * ROOM_LCM * mult)
+                weights.append(ts_w * ROOM_LCM)
     return outcomes, weights
 
 
 OUTCOMES, OUTCOME_WEIGHTS = _enumerate()
-BOOKS_PER_MODE = len(OUTCOMES)  # for every combination mode; buys have their own counts
+BOOKS_PER_MODE = len(OUTCOMES)  # for every board ticket; buys have their own counts
 TOTAL_WEIGHT = sum(OUTCOME_WEIGHTS)
 assert TOTAL_WEIGHT == NUM_SEGMENTS * TOP_SLOT_TOTAL * ROOM_LCM
 assert TOTAL_WEIGHT < 2**64
 
 
-def _buy_any_scale() -> Dict[str, int]:
-    """Integer factor per room that turns the segment shares (4 : 3 : 3 : 3) into BUY_ANY_PICK."""
-    ratios = {r: Fraction(w, SEGMENT_COUNT[r]) for r, w in BUY_ANY_PICK.items()}
-    common = lcm(*(f.denominator for f in ratios.values()))
-    return {r: int(f * common) for r, f in ratios.items()}
-
-
-# Buy modes: the same outcome space cut down to the bought rooms' segments (and, for the
-# any-bonus buy, re-weighted between rooms).
+# Buy modes: the same outcome space cut down to the bought room's segments.
 BUY_OUTCOMES: Dict[str, Tuple[List[Outcome], List[int]]] = {
-    mode: _enumerate(rooms, _buy_any_scale() if mode == "buy_any" else None)
-    for mode, rooms in BUY_MODES.items()
+    mode: _enumerate(rooms) for mode, rooms in BUY_MODES.items()
 }
 assert all(sum(w) < 2**64 for _, w in BUY_OUTCOMES.values())
 
@@ -442,7 +419,7 @@ def books_for_mode(mode: str) -> int:
 
 
 def decode_outcome(index: int, mode: Optional[str] = None) -> Outcome:
-    """Simulation index -> outcome for `mode` (any combination mode when omitted). Cycles."""
+    """Simulation index -> outcome for `mode` (any board ticket when omitted). Cycles."""
     outcomes = outcomes_for(mode)[0] if mode else OUTCOMES
     return outcomes[index % len(outcomes)]
 
@@ -618,7 +595,7 @@ if __name__ == "__main__":
     print(f"Top Slot E[m | aligned] = {float(TOP_SLOT_MEAN):.4f}, miss share = {_miss / TOP_SLOT_TOTAL:.4f}")
     for spot in SPOTS:
         print(f"  {spot:7s} segs {SEGMENT_COUNT[spot]:2d}  q={float(TOP_SLOT_PAIRING[spot]):.4f}  return={float(spot_return(spot)):.6f}")
-    print(f"modes: {len(MODE_NAMES)} (every spot bettable alone: {not UNPUBLISHED_ALONE})")
+    print(f"modes: {len(ALL_MODE_NAMES)} of Stake's {MAX_MODES} (every spot bettable alone: {not UNPUBLISHED_ALONE})")
     worst = min(COMPLIANCE.items(), key=lambda kv: kv[1]["p_max_win"])
     print(f"rarest max win: {worst[0]} {worst[1]['max_win']}x at 1 in {float(1 / worst[1]['p_max_win']):,.0f}")
     for mode in ("x1", "pp", "bw", "ov", "pp_bw_tc_ov", "x1_x2_x5_x10_pp_bw_tc_ov") + BUY_MODE_NAMES:

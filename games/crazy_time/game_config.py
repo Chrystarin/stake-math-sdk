@@ -1,8 +1,9 @@
 """Crazy Time (working title) game configuration.
 
-One bet mode per combination of spots (all 255) on one shared outcome space, plus five buy
-modes. `amount` is the chip; the RGS charges `cost x amount`, cost being the spots covered (or
-the buy's price). See crazy_time_data for the outcome model and the RTP derivation.
+Eleven board tickets (each spot alone, the four numbers, the four rooms, the whole board) on one
+shared outcome space, plus a buy for each of the four rooms: 15 modes, under Stake's cap of 20.
+`amount` is the chip; the RGS charges `cost x amount`, cost being the spots covered (or the buy's
+price). See crazy_time_data for the outcome model and the RTP derivation.
 """
 
 import os

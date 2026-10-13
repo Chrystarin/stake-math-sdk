@@ -30,22 +30,26 @@ The matching web client lives in the separate `stake-web-sdk` repo at `apps/craz
   what keeps the game's 50,000x on a room with three segments, and the wheel is drawn to the same
   widths the book weighs.
 
-## Bet modes (255): one per combination of spots
+## Bet modes (15): eleven board tickets and four room buys
 
-A bet covers any set of spots at ONE chip each; `cost` = spots covered, `amount` = chip. Every
-non-empty combination of the eight spots is a mode, named by the spots' codes in SPOTS order
-(`SPOT_CODE`: x1 x2 x5 x10 pp bw tc ov), e.g. `x1`, `pp_bw_tc_ov`, `x1_x2_x5_x10_pp_bw_tc_ov`.
+Stake caps a game at 20 modes (approval guidelines, read 2026-10-14: "a game can have at most
+20 modes", and the publish fails above it; `MAX_MODES`). The 255 free spot combinations published
+before are gone. A bet is one of eleven tickets at ONE chip per spot — each of the eight spots
+alone, the four numbers, the four bonus rooms, or the whole board — or one of the four room buys.
+`cost` = spots covered, `amount` = chip. Modes are named by the spots' codes in SPOTS order
+(`SPOT_CODE`: x1 x2 x5 x10 pp bw tc ov).
 
-| Combination | Cost | Max win (x chip) |
-| --- | --- | --- |
-| a single number | 1 | 51 / 101 / 251 / 501 |
-| a single room | 1 | 12,500 (chest) / 20,000 (Plinko, Voyage) / 50,000 (Wheel) |
-| anything containing the Bonus Wheel | n | 50,000 |
-| anything containing Pirate Plinko or Ocean Voyage but not the Bonus Wheel | n | 20,000 |
+| Mode | Covers | Cost | Max win (x chip) |
+| --- | --- | --- | --- |
+| `x1` `x2` `x5` `x10` | one number | 1 | 51 / 101 / 251 / 501 |
+| `pp` `bw` `tc` `ov` | one room | 1 | 20,000 / 50,000 / 12,500 / 20,000 |
+| `x1_x2_x5_x10` | the four numbers | 4 | 501 |
+| `pp_bw_tc_ov` | the four rooms | 4 | 50,000 |
+| `x1_x2_x5_x10_pp_bw_tc_ov` | the whole board | 8 | 50,000 |
 
-All 255 are published: every spot covers at least 3 of the 54 segments, so even a room alone
-pays at least once in 20 spins (`MIN_HIT_RATE`). `UNPUBLISHED_ALONE` is asserted empty and stays
-as the guard, should the rim ever change again.
+Every spot covers at least 3 of the 54 segments, so even a room alone pays at least once in 20
+spins (`MIN_HIT_RATE`). `UNPUBLISHED_ALONE` is asserted empty and stays as the guard, should the
+rim ever change again. The web client's board only accepts these tickets.
 
 `compliance()` runs at import and asserts, for every mode: RTP in Stake's band and within
 0.01% of the target (zero cross-mode spread), hit rate >= 1 in 20, and the advertised max win
@@ -54,11 +58,10 @@ depth under a 50x Top Slot (1 in 14.2 million); Pirate Plinko's 400x edges are n
 million), which is why `PLINKO_TABLE` adds a flat weight floor to the binomial landing weights;
 the Bonus Wheel's 50,000x lands 1 in 9.5 million.
 
-## Buy-bonus modes (5)
+## Buy-bonus modes (4)
 
 | Mode | Opens | Price (chips) | Books | Max win |
 | --- | --- | --- | --- | --- |
-| `buy_any` | a room, picked 6 : 7 : 7 : 7 (chest 22%, each other room 26%) | 17 | 10,854 | 50,000 |
 | `buy_tc` | Treasure Chest | 13.5 | 3,564 | 12,500 |
 | `buy_pp` | Pirate Plinko | 18 | 3,159 | 20,000 |
 | `buy_ov` | Ocean Voyage | 18 | 2,430 | 20,000 |
@@ -67,12 +70,10 @@ the Bonus Wheel's 50,000x lands 1 in 9.5 million.
 A buy goes straight into the room at the room's natural odds of also carrying a Top Slot
 multiplier. A room's price is 54 / its segments (`buy_price`): each spot returns the target on
 one chip, so a room's mean per hit is RTP x 54 / segments and that price returns the target again.
-The any-bonus buy is a whole 17 chips (`BUY_ANY_PRICE`): picking rooms by segment share would
-make it 16.62, so it picks them by `BUY_ANY_PICK` (chest 6 : 7 : 7 : 7) instead, which prices out
-at exactly 17 at the same RTP. Books are the base enumeration cut to the bought rooms' segments
-(re-weighted between rooms for `buy_any`), so a buy book still carries a `wheelSpin` onto the room
-for the presentation. Flagged `is_buybonus` (no hit-rate floor; RTP band, spread and max-win floor still
-checked in `compliance()`).
+Books are the base enumeration cut to the bought room's segments, so a buy book still carries a
+`wheelSpin` onto the room for the presentation. Flagged `is_buybonus` (no hit-rate floor; RTP
+band, spread and max-win floor still checked in `compliance()`). A fifth `buy_any` (a room picked
+6 : 7 : 7 : 7 for a whole 17 chips) was published until the 20-mode cap made every mode count.
 
 ## RTP: 96.7% on every mode
 
@@ -85,7 +86,7 @@ and for a room with mean multiplier R
 
     P(hit) * R * (1 + q * (E[m] - 1)) = 0.967
 
-Because every spot returns 96.7%, every combination does too (linearity), so all 255 modes
+Because every spot returns 96.7%, every ticket does too (linearity), so all 15 modes
 certify at one number.
 
 ## How the books are made
@@ -93,8 +94,8 @@ certify at one number.
 The outcome space (segment x Top Slot entry x room outcome) is small — **14,175 outcomes** — so
 every mode's books list each outcome exactly once (`decode_outcome(sim)`), and the lookup table
 carries each outcome's **exact probability weight** (`run.py: write_exact_weights`, run after
-`create_books`). No RNG, no optimizer; the served RTP is the analytic value. All 255 modes share
-the outcome list and differ only in the payout column, so the publish is about 130 MB.
+`create_books`). No RNG, no optimizer; the served RTP is the analytic value. The eleven board
+tickets share the outcome list and differ only in the payout column, so the publish is a few MB.
 
 Book events per round: `topSlot`, `wheelSpin`, an optional room event (`piratePlinkoRoom` /
 `bonusWheelRoom` / `chestRoom` / `oceanVoyageRoom`, always authored when the wheel lands on a
@@ -106,7 +107,7 @@ decoys, dive path), all derived deterministically from the simulation index.
 
 ```
 crazy_time_data.py   wheel, tables, Top Slot solver, enumeration, payout, presentation extras
-game_config.py       GameConfig + 255 combination BetModes (is_feature) + 5 buy BetModes (is_buybonus)
+game_config.py       GameConfig + 11 ticket BetModes (is_feature) + 4 buy BetModes (is_buybonus)
 gamestate.py         one round: decode -> events -> win
 run.py               create_books, then rewrite LUT weights, then generate_configs
 library/             GENERATED: publish_files/ is the RGS upload set
